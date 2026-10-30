@@ -68,7 +68,7 @@ Testnet transactions, all executed and confirmed through Tatum's gRPC gateway:
 |---|---|
 | Agent pays from the native family allowance | `YPjCY2bJMgDMkrTMM6Wd6Pna9Yoggp9i6Zpaj4Z7AVE` |
 | Agent pays the café over MPP from the food allowance | `7Zs52viPhY2oZHPWPsMCCAtTPtS39KmbA6Zd6sEaT1E7` |
-| Owner-signed payment above a limit | `6NGAtKa4RVhHe37Js8599g41gXJagScA6QZAu3EBHU2Q` |
+| Owner-signed payment | `6NGAtKa4RVhHe37Js8599g41gXJagScA6QZAu3EBHU2Q` |
 | One-shot owner approval, then MPP café payment | `9kdA3BsCqrJ9MUVWpDuES8m4YnXqpHuB7gZg9nbQtAhJ` |
 | Limit changed: revoke + reissue in one transaction | `8SR4pNTgoS7JSR2aZHde8T39oLvXSKjTgUHuuNjeks6` |
 | Family allowance created | `B1VXzCNL2rHJEwGbRNoTqiXS7HgimrQx9W24S2cMnDGx` |
