@@ -1,0 +1,43 @@
+// Records the mock-mode flow at phone size to demo/usual-demo.webm. Needs `pnpm dev:mock --port 3123`.
+import { createRequire } from "node:module";
+import { readdirSync, renameSync } from "node:fs";
+const require = createRequire(import.meta.url);
+const pw = readdirSync("node_modules/.pnpm").find((d) => d.startsWith("playwright-core@"));
+const { chromium } = require(`${process.cwd()}/node_modules/.pnpm/${pw}/node_modules/playwright-core`);
+
+const browser = await chromium.launch();
+const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, colorScheme: "light", recordVideo: { dir: "demo", size: { width: 390, height: 844 } } });
+const page = await ctx.newPage();
+const pause = (ms) => page.waitForTimeout(ms);
+await page.goto("http://localhost:3123");
+await pause(3500);
+await page.getByRole("button", { name: "Type", exact: true }).click();
+const say = async (text, wait = 3500) => {
+  await page.getByLabel("Type instead").pressSequentially(text, { delay: 55 });
+  await pause(300);
+  await page.keyboard.press("Enter");
+  await pause(wait);
+};
+await say("That's Mum");
+await say("that's my gym");
+await say("It's Streamly, a streaming subscription");
+await say("Send Mum her usual", 7000);
+await page.getByRole("button", { name: "Settings" }).click();
+await pause(2500);
+await page.getByRole("button", { name: "Café: flat white" }).click();
+await pause(3500);
+await page.getByRole("button", { name: "Approve with wallet" }).click();
+await pause(5000);
+await say("What am I wasting money on?", 6000);
+await say("yes", 3500);
+await page.getByRole("button", { name: "Settings" }).click();
+await pause(1200);
+await page.getByRole("button", { name: "Memory: on" }).click();
+await pause(1500);
+await page.getByRole("button", { name: "Close settings" }).click();
+await pause(600);
+await say("Send Mum her usual", 3500);
+const path = await page.video().path();
+await ctx.close();
+await browser.close();
+renameSync(path, "demo/usual-demo.webm");

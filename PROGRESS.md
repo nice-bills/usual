@@ -39,13 +39,16 @@
 - Testnet live: 9 seeded USDC payments, 3 native allowances (family, food, subscriptions), agent paid from the family allowance (`YPjCY2bJMgDMkrTMM6Wd6Pna9Yoggp9i6Zpaj4Z7AVE`), café paid over MPP from the food allowance (`7Zs52viPhY2oZHPWPsMCCAtTPtS39KmbA6Zd6sEaT1E7`). DEMO_SCALE=0.05 fits the 20 USDC from the faucet.
 - The first live run swapped Mum and Gym labels (test script answered in the wrong order); 1.50 USDC went to the gym test wallet. Corrected with newer records; summary and "the usual" now read correctly.
 
-### Next
-1. Live checks: owner signature path with a real wallet, revoke the delegate, voice in a real browser.
-2. Design pass, deploy to Vercel, video, blog post, README proof section.
+- Live owner paths: owner-signed payment, one-shot café approval over MPP, limit reissue (revoke + new allowance). ✓ The demo owner key signed; a real wallet popup is still untested.
+- UI rebuilt around the owner's reference: one white screen, balance, orb, one card, settings screen. 7 e2e tests pass.
+- Demo video recorded (`demo/usual-demo.mp4`, 65 s, mock mode, typed).
+- `BLOG.md` drafted, README proof filled (36 memories on Mainnet).
 
-### Blockers (owner)
-- Plugin sign-in for Claude Code (`memwal_login` link); does not block Usual.
-- More test USDC before the demo: 4.725 left.
+### Next (owner)
+1. Create the empty GitHub repo `nice-bills/usual`, add the remote, push.
+2. Deploy: import the repo in Vercel, or `vercel login` then deploy. Env vars from `.env`, but not `OWNER_SUI_PRIVATE_KEY` or payee keys; set `OWNER_ADDRESS` and `PUBLIC_ORIGIN`.
+3. Wallet: import the demo owner key into Slush, test sign-in and an approval; hold-to-talk in Chrome; revoke the delegate in the dashboard.
+4. Publish `BLOG.md`, record the voice video, submit the form.
 
 ### Known risks
 - The write queue lives in process memory: a Vercel cold start can drop queued writes. Fix if it shows up: retry from the client, or keep the queue in the browser.
