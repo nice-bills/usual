@@ -10,3 +10,5 @@ A wallet with no buttons that learns how you talk about money. Anyone, anywhere,
 - Personality: calm, plain, attentive.
 - Anti-references: crypto dashboards, neon dark-mode wallets, chat bubbles.
 - No country, currency or culture assumed in copy.
+
+Interaction model (after Carlos Marques' voice-wallet concept, owner's reference): one white screen, a centred balance, one orb. Words appear above the orb; one card appears only when needed and ends as a check mark; settings live on their own screen. Our own: the moss orb and the "Understood as" card.

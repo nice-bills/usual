@@ -5,9 +5,10 @@ import { ConnectButton, useCurrentAccount, useSignPersonalMessage, useSignTransa
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Proposal, Question, Reply } from "@/lib/agent";
 import type { Action } from "@/lib/parse";
+import type { State } from "@/lib/records";
 
 type Health = { mock: boolean; network: string; tatum: boolean; walrusMemory: boolean; llm: string };
-type Snapshot = { owner: string; symbol: string; balance: string; memory: { count: number; source: string; pending: number; error?: string }; questions: Question[] };
+type Snapshot = { owner: string; symbol: string; balance: string; state: State; memory: { count: number; source: string; pending: number; error?: string }; questions: Question[] };
 
 async function api<T>(path: string, body?: unknown): Promise<T> {
   const res = await fetch(`/api/${path}`, body === undefined ? undefined : { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
@@ -46,6 +47,9 @@ export default function Usual() {
   const [typed, setTyped] = useState("");
   const [memoryOn, setMemoryOn] = useState(true);
   const [autoPaying, setAutoPaying] = useState(false);
+  const [settings, setSettings] = useState(false);
+  const [typing, setTyping] = useState(false);
+  const [done, setDone] = useState<string | null>(null);
   const rec = useRef<Rec | null>(null);
   const finalText = useRef("");
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -105,7 +109,12 @@ export default function Usual() {
         r = await api("cafe/pay", { item: p.item, path: p.path });
         if (r.needsOwner) r = await signAndSubmit("cafe", r.needsOwner, { item: p.item });
       }
-      setStatus(`${r.say}${r.digest ? ` · ${r.digest}` : ""}`);
+      // A payment ends as one check mark, then the screen returns to just the balance.
+      setStatus("");
+      setReply(null);
+      setHeard("");
+      setDone(r.say);
+      setTimeout(() => setDone(null), 4000);
       speak(r.say);
       await refresh();
     } catch (e) {
@@ -127,7 +136,7 @@ export default function Usual() {
       setFollowUp(r.followUp ?? null);
       // Inside a learned limit the agent pays on its own after a short, cancellable pause.
       if (r.proposal && r.proposal.type !== "limit" && r.proposal.path === "agent") {
-        setStatus("Paying in 2s. Tap Cancel to stop.");
+        setStatus("");
         setAutoPaying(true);
         timer.current = setTimeout(() => { setAutoPaying(false); execute(r.proposal!); }, 2000);
       }
@@ -163,69 +172,97 @@ export default function Usual() {
   if (!health) return <main className="app" aria-busy="true" />;
 
   const proposal = reply?.proposal;
-  const needsSignature = proposal && (proposal.type === "limit" || proposal.path === "owner");
+  const symbol = snap?.symbol ?? "USDC";
+  const limits = Object.values(snap?.state?.limits ?? {});
+
+  if (settings) {
+    return (
+      <main className="app settings">
+        <header className="settings-top">
+          <h1>Settings</h1>
+          <button className="ghost" onClick={() => setSettings(false)}>Close settings</button>
+        </header>
+        {!health.mock && <ConnectButton />}
+        <h2>Memory</h2>
+        <p data-testid="memory">{snap?.memory.count ?? 0} memories · {snap?.memory.source}{snap?.memory.pending ? ` · ${snap.memory.pending} queued` : ""}</p>
+        <button className="row-button" onClick={async () => { const r = await api<{ on: boolean }>("memory", { on: !memoryOn }); setMemoryOn(r.on); await refresh(); }}>Memory: {memoryOn ? "on" : "off"}</button>
+        <button className="row-button" onClick={() => { setSettings(false); refresh(true).then(() => setStatus("Rebuilt from Walrus Memory.")); }}>Rebuild from Walrus</button>
+        <h2>Limits</h2>
+        {limits.length ? limits.map((l) => (
+          <p key={l.category} className="limit"><span>{l.category}</span><span>{l.amount} {symbol} / {l.periodDays === 1 ? "day" : l.periodDays === 7 ? "week" : `${l.periodDays} days`}</span></p>
+        )) : <p>No limits yet. Say “limit food to 10 a day”.</p>}
+        <p className="fine">The chain holds the agent to these. Above one, it waits for your wallet.</p>
+        <h2>Try the café</h2>
+        <button className="row-button" onClick={() => { setSettings(false); send("buy a flat white at the café"); }}>Café: flat white</button>
+        <button className="row-button" onClick={() => { setSettings(false); send("pay for a croissant at the café"); }}>Café: croissant</button>
+        <p className="fine">{health.mock ? "Mock mode: no keys, in-memory ledger." : `${health.network} · Tatum ${health.tatum ? "on" : "off"} · Walrus Memory ${health.walrusMemory ? "on" : "off"}`} · parser: {health.llm}</p>
+      </main>
+    );
+  }
 
   return (
     <main className="app">
-      <header className="top">
-        <span className="brand">Usual</span>
-        {snap && (
-          <span className="memory" data-testid="memory">
-            {snap.memory.count} memories · {snap.memory.source}
-            {snap.memory.pending ? ` · ${snap.memory.pending} queued` : ""}
-          </span>
-        )}
-        {!health.mock && <ConnectButton />}
-      </header>
+      <button className="menu" aria-label="Settings" onClick={() => setSettings(true)}><span /><span /></button>
 
-      {snap?.memory.error && <p className="notice" role="alert">Can&apos;t reach your memory right now. I don&apos;t know who anyone is until it&apos;s back.</p>}
+      <section className="stage" data-card={!!proposal || !!done}>
+        {snap && <p className="balance" data-testid="balance">{snap.balance} <span className="unit">{symbol}</span></p>}
 
-      {snap && (
-        <p className="balance" data-testid="balance">
-          {snap.balance} <span className="unit">{snap.symbol}</span>
-        </p>
-      )}
-
-      {ready ? (
-        <>
-          <section className="talkback" aria-live="polite">
-            {asking && <p className="question" data-testid="asking"><b>Usual:</b> {asking.text}</p>}
-            {heard && <p className="heard" data-testid="heard"><b>Heard:</b> “{heard}”</p>}
-            {reply?.understood && <p className="understood" data-testid="understood"><b>Understood as:</b> {reply.understood}</p>}
-            {reply && <p className="say" data-testid="say"><b>Usual:</b> {reply.say}</p>}
-            {needsSignature && <button className="primary" onClick={() => execute(proposal)}>Sign with wallet</button>}
+        {proposal && (
+          <article className="card" key={JSON.stringify(proposal)}>
+            <header>
+              <span>Understood as</span>
+              {"overLimit" in proposal && proposal.overLimit && <span className="pill">{proposal.overLimit.replace(/^o/, "O").replace(/ \(.*$/, "")}</span>}
+            </header>
+            <div data-testid="understood">
+              <p className="amount">{proposal.amount} <span className="unit">{symbol}{proposal.type === "limit" ? ` per ${proposal.periodDays === 1 ? "day" : proposal.periodDays === 7 ? "week" : `${proposal.periodDays} days`}` : ""}</span></p>
+              <dl>
+                {proposal.type === "pay" && <><dt>To</dt><dd>{proposal.name} ({proposal.address.slice(0, 4)}…{proposal.address.slice(-2)})</dd></>}
+                {proposal.type === "pay" && proposal.reason && <><dt>Why</dt><dd>{proposal.reason}</dd></>}
+                {proposal.type === "cafe" && <><dt>To</dt><dd>Café · {proposal.label}</dd></>}
+                {proposal.type === "limit" && <><dt>For</dt><dd>{proposal.category}</dd></>}
+                {proposal.type !== "limit" && <><dt>Balance after</dt><dd>{proposal.balanceAfter}</dd></>}
+              </dl>
+            </div>
+            {(proposal.type === "limit" || proposal.path === "owner") && <button className="approve" onClick={() => execute(proposal)}>Approve with wallet</button>}
             {autoPaying && (
-              <button className="secondary" onClick={() => { clearTimeout(timer.current!); setAutoPaying(false); setStatus("Cancelled."); }}>Cancel payment</button>
+              <>
+                <div className="countdown" aria-hidden="true" />
+                <button className="ghost" onClick={() => { clearTimeout(timer.current!); setAutoPaying(false); setReply(null); setStatus("Cancelled."); }}>Cancel payment</button>
+              </>
             )}
-            {status && <p className="status" data-testid="status">{status}</p>}
-          </section>
+          </article>
+        )}
 
-          <footer className="dock">
-            <button className="orb" data-on={listening} aria-pressed={listening} onPointerDown={startTalk} onPointerUp={stopTalk} onPointerLeave={() => listening && stopTalk()} {...hold}>
-              {listening ? "Listening" : "Hold to talk"}
-            </button>
-            <form className="typed" onSubmit={(e) => { e.preventDefault(); send(typed); setTyped(""); }}>
-              <input aria-label="Type instead" placeholder="Or type: Send Mum her usual" value={typed} onChange={(e) => setTyped(e.target.value)} />
-              <button type="submit" className="secondary">Send</button>
-            </form>
-            <details className="demo">
-              <summary>Demo controls</summary>
-              <div className="demo-row">
-                <button className="secondary" onClick={() => send("buy a flat white at the café")}>Café: flat white</button>
-                <button className="secondary" onClick={() => send("pay for a croissant at the café")}>Café: croissant</button>
-                <button className="secondary" onClick={() => refresh(true).then(() => setStatus("Rebuilt from Walrus Memory."))}>Rebuild from Walrus</button>
-                <button className="secondary" onClick={async () => { const r = await api<{ on: boolean }>("memory", { on: !memoryOn }); setMemoryOn(r.on); await refresh(); }}>
-                  Memory: {memoryOn ? "on" : "off"}
-                </button>
-              </div>
-              <p className="meta">{health.mock ? "Mock mode: no keys, in-memory ledger." : `${health.network} · Tatum ${health.tatum ? "on" : "off"} · Walrus Memory ${health.walrusMemory ? "on" : "off"}`} · parser: {health.llm}</p>
-            </details>
-          </footer>
-        </>
-      ) : (
-        <p className="question">{account ? "Sign the message in your wallet to continue." : "Connect the owner wallet to start."}</p>
-      )}
-      {status && !ready && <p className="status" role="alert">{status}</p>}
+        {done && (
+          <article className="card done" role="status">
+            <span className="check" aria-hidden="true" />
+            <p data-testid="status">{done}</p>
+          </article>
+        )}
+      </section>
+
+      <footer className="dock">
+        <div className="words" aria-live="polite">
+          {heard && <p className="heard" data-testid="heard">“{heard}”</p>}
+          {reply ? <p className="say" data-testid="say">{reply.say}</p> : asking && <p className="say" data-testid="asking">{asking.text}</p>}
+          {reply && asking && !proposal && <p className="say" data-testid="asking">{asking.text}</p>}
+          {status && <p className="fine" role="status">{status}</p>}
+          {!ready && <p className="say">{account ? "Sign the message in your wallet." : "Connect your wallet to start."}</p>}
+        </div>
+        {ready ? (
+          <>
+            <button className="orb" data-on={listening} aria-pressed={listening} aria-label={listening ? "Listening, release to send" : "Hold to talk"} onPointerDown={startTalk} onPointerUp={stopTalk} onPointerLeave={() => listening && stopTalk()} {...hold} />
+            {typing ? (
+              <form className="typed" onSubmit={(e) => { e.preventDefault(); send(typed); setTyped(""); }}>
+                <input aria-label="Type instead" autoFocus placeholder="Send Mum her usual" value={typed} onChange={(e) => setTyped(e.target.value)} />
+                <button type="submit" className="ghost">Send</button>
+              </form>
+            ) : (
+              <button className="ghost" onClick={() => setTyping(true)}>Type</button>
+            )}
+          </>
+        ) : !health.mock && <ConnectButton />}
+      </footer>
     </main>
   );
 }
