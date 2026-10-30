@@ -1,0 +1,314 @@
+// The executor. Parsed Actions are proposals; everything here is validated against what
+// Walrus Memory says and what the limits allow before any money moves.
+import { env } from "./env";
+import { checkLimit, inferRecurring, validateIntent, type ChainPayment, type Recurring } from "./insights";
+import { load, remember } from "./memory";
+import { formatAmount, parseAmount, shortAddr } from "./money";
+import { parse, type Action } from "./parse";
+import { categoryFor, nameForAddress, resolveContact, type Category, type Rec, type State } from "./records";
+import * as wallet from "./wallet";
+
+const DAY = 86_400_000;
+const times = (n: number) => (n === 1 ? "once" : n === 2 ? "twice" : n === 3 ? "three times" : `${n} times`);
+const fmtDate = (ms: number) => new Date(ms).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+
+export type Question = { address: string; text: string; count: number; usual: string };
+
+export type Proposal =
+  | { type: "pay"; to: string; name: string; address: string; amount: string; category: Category; path: wallet.Path; balanceAfter: string; simulated: boolean; reason: string; overLimit?: string }
+  | { type: "limit"; category: Category; amount: string; periodDays: number }
+  | { type: "cafe"; item: string; label: string; amount: string; path: wallet.Path; overLimit?: string; balanceAfter: string };
+
+export type Reply = {
+  heard: string;
+  by: "rules" | "llm";
+  action: Action;
+  say: string;
+  understood?: string;
+  proposal?: Proposal;
+  asking?: Question | null;
+  followUp?: Action | null;
+  remembered: number;
+  memoryError?: string;
+};
+
+/** Unnamed recurring payees from chain history become "Who's that?" questions. */
+export function questionsFrom(history: ChainPayment[], s: State, skip: string[] = []): Question[] {
+  const known = new Set(Object.values(s.contacts).map((c) => c.address));
+  return inferRecurring(history)
+    .filter((r) => !known.has(r.address) && !skip.includes(r.address) && r.address !== wallet.cafeAddress())
+    .map((r) => ({
+      address: r.address,
+      count: r.count,
+      usual: formatAmount(r.usual),
+      text: `You've sent ${shortAddr(r.address)} ${formatAmount(r.usual)} ${env.symbol} ${times(r.count)}. Who's that?`,
+    }));
+}
+
+export async function snapshot(fresh = false, skip: string[] = []) {
+  const [mem, bal, hist] = await Promise.all([load(fresh), wallet.balance(), wallet.history()]);
+  return {
+    owner: wallet.owner(),
+    symbol: env.symbol,
+    balance: formatAmount(bal),
+    memory: { count: mem.records.length, source: mem.source, pending: mem.pending, error: mem.error },
+    state: mem.state,
+    questions: questionsFrom(hist, mem.state, skip),
+  };
+}
+
+export type TalkContext = { asking?: Question | null; followUp?: Action | null; skip?: string[] };
+
+export async function talk(text: string, ctx: TalkContext): Promise<Reply> {
+  const mem = await load();
+  const s = mem.state;
+  const yes = /^(yes|yeah|yep|sure|ok(ay)?|do it|go ahead|please do)\b/i.test(text.trim());
+  const { action, by } = yes && ctx.followUp
+    ? { action: ctx.followUp, by: "rules" as const }
+    : await parse(text, { asking: ctx.asking, contacts: Object.values(s.contacts).map((c) => c.name) });
+  const base = { heard: text, by, action, remembered: 0, memoryError: mem.error };
+  const out = await run(action, s, ctx);
+  return { ...base, ...out };
+}
+
+type Out = Omit<Reply, "heard" | "by" | "action" | "memoryError">;
+
+async function write(recs: Rec[]) {
+  const r = await remember(recs);
+  return r.stored.length;
+}
+
+async function run(a: Action, s: State, ctx: TalkContext): Promise<Out> {
+  switch (a.kind) {
+    case "name": return name(a, s, ctx);
+    case "pay": return pay(a, s);
+    case "set_usual": {
+      const r = resolveContact(s, a.to);
+      const amount = parseAmount(a.amount);
+      if (r.kind !== "one") return { say: r.kind === "none" ? `Who's ${a.to}?` : `Which ${a.to}?`, remembered: 0 };
+      if (amount == null) return { say: `How much is ${r.contact.name}'s usual?`, remembered: 0 };
+      const n = await write([{ type: "USUAL", name: r.contact.name, amount: formatAmount(amount) }, { type: "MENTION", name: r.contact.name, at: Date.now() }]);
+      return { say: `Got it. ${r.contact.name}'s usual is ${formatAmount(amount)} ${env.symbol} now.`, remembered: n };
+    }
+    case "set_limit": {
+      const amount = parseAmount(a.amount);
+      if (amount == null || !a.periodDays) return { say: "What should the limit be, and per day, week or month?", remembered: 0 };
+      const per = a.periodDays === 1 ? "day" : a.periodDays === 7 ? "week" : `${a.periodDays} days`;
+      return {
+        say: `Sign once and the chain will hold me to ${formatAmount(amount)} ${env.symbol} a ${per} on ${a.category}.`,
+        understood: `${a.category} limit · ${formatAmount(amount)} ${env.symbol} per ${per} · enforced by a Sui allowance`,
+        proposal: { type: "limit", category: a.category, amount: formatAmount(amount), periodDays: a.periodDays },
+        remembered: 0,
+      };
+    }
+    case "summary": return summary(s);
+    case "subscriptions": {
+      const subs = Object.values(s.subscriptions).filter((x) => !x.cancelled);
+      if (!subs.length) return { say: "I don't know any subscriptions yet.", remembered: 0 };
+      const total = subs.reduce((t, x) => t + (parseAmount(x.amount) ?? 0n), 0n);
+      return { say: `${subs.map((x) => `${x.name} ${x.amount}`).join(", ")}. About ${formatAmount(total)} ${env.symbol} a month.`, remembered: 0 };
+    }
+    case "cancel": {
+      const sub = Object.values(s.subscriptions).find((x) => x.name.toLowerCase().includes(a.name.toLowerCase()) || a.name.toLowerCase().includes(x.name.toLowerCase()));
+      if (!sub) return { say: `I don't see a subscription called ${a.name}.`, remembered: 0 };
+      const n = await write([{ ...sub, cancelled: true }, { type: "MENTION", name: sub.name, at: Date.now() }]);
+      return { say: `Done. ${sub.name} is marked cancelled, and I'll stop any payment to it.`, remembered: n };
+    }
+    case "balance": {
+      const bal = await wallet.balance();
+      return { say: `You have ${formatAmount(bal)} ${env.symbol}.`, remembered: 0 };
+    }
+    case "cafe": return cafeProposal(a.item ?? "flat-white", s);
+    case "remember": {
+      const n = await write([{ type: "CORRECTION", note: a.note }]);
+      return { say: "Noted. I'll remember that.", remembered: n };
+    }
+    default:
+      return { say: (a.kind === "unknown" && a.say) || "Try “Send Mum her usual” or “What am I wasting money on?”", remembered: 0 };
+  }
+}
+
+async function name(a: Extract<Action, { kind: "name" }>, s: State, ctx: TalkContext): Promise<Out> {
+  const q = ctx.asking;
+  if (!q) return { say: `Who should ${a.name} be? Tell me when I ask about a wallet.`, remembered: 0 };
+  const hist = await wallet.history();
+  const rec = inferRecurring(hist).find((r) => r.address === q.address);
+  if (!rec) return { say: "I lost track of that wallet. Ask me again.", remembered: 0, asking: null };
+  const category = a.category ?? (a.relation ? "family" : undefined);
+  const recs: Rec[] = [{ type: "CONTACT", name: a.name, address: q.address, relation: a.relation, source: "chain+user" }];
+  let say: string;
+  if (category === "subscriptions" || (!a.relation && rec.cadenceDays >= 25)) {
+    recs.push(subscription(a.name, rec), { type: "CATEGORY", address: q.address, category: "subscriptions" });
+    say = `${a.name}: ${formatAmount(rec.last)} ${env.symbol} a month${rec.previous ? `, up from ${formatAmount(rec.previous)}` : ""}. I'll track it.`;
+  } else {
+    recs.push({ type: "USUAL", name: a.name, amount: formatAmount(rec.usual), count: rec.count });
+    if (category) recs.push({ type: "CATEGORY", address: q.address, category });
+    say = `Got it, ${a.name}. Usually ${formatAmount(rec.usual)} ${env.symbol}.`;
+  }
+  recs.push({ type: "MENTION", name: a.name, at: Date.now() });
+  const n = await write(recs);
+  const skip = [...(ctx.skip ?? []), q.address];
+  const next = questionsFrom(hist, { ...s, contacts: { ...s.contacts, [a.name.toLowerCase()]: recs[0] as never } }, skip)[0] ?? null;
+  return { say: next ? `${say} ${next.text}` : say, asking: next, remembered: n };
+}
+
+function subscription(name: string, r: Recurring): Extract<Rec, { type: "SUBSCRIPTION" }> {
+  return {
+    type: "SUBSCRIPTION", name, address: r.address, amount: formatAmount(r.last),
+    previousAmount: r.previous ? formatAmount(r.previous) : undefined,
+    // shortcut: seeded testnet history is minutes apart, so sub-day cadence is assumed monthly.
+    cadenceDays: r.cadenceDays >= 1 ? r.cadenceDays : 30,
+    lastAt: r.lastAt,
+  };
+}
+
+async function pay(a: Extract<Action, { kind: "pay" }>, s: State): Promise<Out> {
+  const v = validateIntent(s, { to: a.to, amount: a.amount });
+  if (!v.ok) return { say: v.ask, remembered: 0 };
+  const { plan } = v;
+  const sub = s.subscriptions[plan.contact.address];
+  if (sub?.cancelled) return { say: `You cancelled ${sub.name}. I won't pay it unless you set it up again.`, remembered: 0 };
+  const allowanceId = plan.limit.ok ? plan.limit.allowanceId : undefined;
+  const p = await wallet.preview(plan.contact.address, plan.amount, allowanceId);
+  if (!p.ok && p.path === "agent") return { say: `The chain refused it: ${p.error}.`, remembered: 0 };
+  const overLimit = plan.limit.ok ? undefined : `over your ${plan.category} limit (${formatAmount(plan.limit.remaining)} left)`;
+  const n = await write([{ type: "MENTION", name: plan.contact.name, at: Date.now() }]);
+  const understood = `${plan.amountText} ${env.symbol} to ${plan.contact.name} (${shortAddr(plan.contact.address)})${plan.reason ? `, ${plan.reason}` : ""} · balance after: ${formatAmount(p.balanceAfter)}`;
+  return {
+    say: overLimit ? `That's ${overLimit}. It needs your signature.` : p.path === "owner" ? "Sign to send it." : `Sending ${plan.contact.name} ${plan.amountText}.`,
+    understood,
+    proposal: { type: "pay", to: plan.contact.name, name: plan.contact.name, address: plan.contact.address, amount: plan.amountText, category: plan.category, path: p.path, balanceAfter: formatAmount(p.balanceAfter), simulated: p.simulated, reason: plan.reason, overLimit },
+    remembered: n,
+  };
+}
+
+async function cafeProposal(item: string, s: State): Promise<Out> {
+  const origin = process.env.PUBLIC_ORIGIN ?? "http://localhost:3000";
+  const q = await wallet.cafeQuote(item, origin);
+  const lim = checkLimit(s, "food", q.amount);
+  const bal = await wallet.balance();
+  const overLimit = lim.ok ? undefined : `over your food limit (${formatAmount(lim.remaining)} left today)`;
+  const path: wallet.Path = lim.ok && lim.allowanceId ? "agent" : "owner";
+  return {
+    say: overLimit ? `${q.label} is ${formatAmount(q.amount)}. That's ${overLimit}, so I can't pay it on my own. Sign to approve this one.` : `Paying the café ${formatAmount(q.amount)} for a ${q.label.toLowerCase()}.`,
+    understood: `${q.label} · ${formatAmount(q.amount)} ${env.symbol} to café (${shortAddr(q.recipient)}) over MPP · balance after: ${formatAmount(bal - q.amount)}`,
+    proposal: { type: "cafe", item, label: q.label, amount: formatAmount(q.amount), path, overLimit, balanceAfter: formatAmount(bal - q.amount) },
+    remembered: 0,
+  };
+}
+
+async function summary(s: State): Promise<Out> {
+  const hist = await wallet.history();
+  const since = Date.now() - 30 * DAY;
+  const byCat = new Map<Category, bigint>();
+  for (const p of hist.filter((p) => p.at >= since)) {
+    const c = categoryFor(s, p.to);
+    byCat.set(c, (byCat.get(c) ?? 0n) + p.amount);
+  }
+  const parts = [...byCat].sort((a, b) => Number(b[1] - a[1])).map(([c, v]) => `${formatAmount(v)} on ${c}`);
+  const notes: string[] = [];
+  let followUp: Action | null = null;
+  for (const sub of Object.values(s.subscriptions).filter((x) => !x.cancelled)) {
+    if (sub.previousAmount) notes.push(`your ${sub.name.toLowerCase()} went from ${sub.previousAmount} to ${sub.amount}`);
+  }
+  // A subscription the user never brings up after naming it is the likeliest waste.
+  const named = (n: string) => s.mentions[n.toLowerCase()] ?? 0;
+  const stale = Object.values(s.subscriptions)
+    .filter((x) => !x.cancelled && !x.previousAmount)
+    .sort((a, b) => named(a.name) - named(b.name))[0];
+  if (stale) {
+    notes.push(`you haven't mentioned ${stale.name} since ${fmtDate(named(stale.name) || stale.lastAt)}`);
+    followUp = { kind: "cancel", name: stale.name };
+  }
+  const say = [
+    parts.length ? `Last 30 days: ${parts.join(", ")}.` : "No spending in the last 30 days.",
+    notes.length ? `${notes.join(", and ").replace(/^./, (c) => c.toUpperCase())}.` : "",
+    followUp ? `Cancel ${stale!.name}?` : "",
+  ].filter(Boolean).join(" ");
+  return { say, followUp, remembered: 0 };
+}
+
+/** Learning loop: three payments in a row at a new amount become the new usual. */
+export function learnedUsual(s: State, name: string, address: string): string | null {
+  const recent = s.payments.filter((p) => p.to === address).slice(0, 3).map((p) => p.amount);
+  const cur = s.usuals[name.toLowerCase()]?.amount;
+  return recent.length === 3 && recent.every((a) => a === recent[0]) && recent[0] !== cur ? recent[0] : null;
+}
+
+/** Confirmed agent payment: re-validate, pay inside the allowance, remember it. */
+export async function confirmPay(to: string, amount?: string) {
+  const { state: s } = await load();
+  const v = validateIntent(s, { to, amount });
+  if (!v.ok) return { ok: false as const, say: v.ask };
+  const { plan } = v;
+  if (!plan.limit.ok || !plan.limit.allowanceId) {
+    if (!plan.limit.ok) return { ok: false as const, say: "Over the limit: this needs your signature.", needsOwner: await wallet.ownerPayBytes(plan.contact.address, plan.amount) };
+    return { ok: false as const, say: "No allowance for this yet: sign it yourself.", needsOwner: await wallet.ownerPayBytes(plan.contact.address, plan.amount) };
+  }
+  const r = await wallet.agentPay(plan.contact.address, plan.amount, plan.limit.allowanceId);
+  return { ok: true as const, ...(await recordPayment(s, plan.contact.address, plan.amount, r.digest, "agent")) };
+}
+
+/** Owner-signed payment bytes for a plan the server validated. */
+export async function ownerPay(to: string, amount?: string) {
+  const { state: s } = await load();
+  const v = validateIntent(s, { to, amount });
+  if (!v.ok) return { ok: false as const, say: v.ask };
+  return { ok: true as const, bytes: await wallet.ownerPayBytes(v.plan.contact.address, v.plan.amount) };
+}
+
+export async function recordPayment(s: State, address: string, amount: bigint, digest: string, via: "agent" | "owner" | "mpp") {
+  const name = nameForAddress(s, address);
+  const category = categoryFor(s, address);
+  const recs: Rec[] = [{ type: "PAYMENT", to: address, name, amount: formatAmount(amount), digest, category, at: Date.now(), via }];
+  const after = { ...s, payments: [recs[0] as Extract<Rec, { type: "PAYMENT" }>, ...s.payments] };
+  const learned = name ? learnedUsual(after, name, address) : null;
+  if (name && learned) recs.push({ type: "USUAL", name, amount: learned, count: 3 });
+  else if (name && s.usuals[name.toLowerCase()]?.amount === formatAmount(amount)) {
+    const u = s.usuals[name.toLowerCase()];
+    recs.push({ ...u, count: (u.count ?? 0) + 1 });
+  }
+  await remember(recs);
+  return {
+    digest,
+    say: `Sent ${formatAmount(amount)} ${env.symbol}${name ? ` to ${name}` : ""}.${learned ? ` I'll treat ${learned} as ${name}'s usual from now on.` : ""}`,
+  };
+}
+
+/** Owner signed something: a payment, a new limit, or a one-shot café approval. */
+export async function afterSigned(kind: "pay" | "limit" | "cafe", bytes: string, signature: string, meta: { category?: Category; amount?: string; periodDays?: number; item?: string }) {
+  const { state: s } = await load();
+  const r = await wallet.submitSigned(bytes, signature);
+  if (kind === "pay") {
+    if (!r.payment) return { ok: true, digest: r.digest, say: "Done." };
+    return { ok: true, ...(await recordPayment(s, r.payment.to, r.payment.amount, r.digest, "owner")) };
+  }
+  const allowanceId = r.allowances[0];
+  if (!allowanceId) return { ok: false, digest: r.digest, say: "Signed, but no allowance was created." };
+  if (kind === "limit") {
+    const amount = parseAmount(meta.amount ?? "");
+    if (!meta.category || amount == null || !meta.periodDays) return { ok: false, digest: r.digest, say: "Missing limit details." };
+    await remember([{ type: "LIMIT", category: meta.category, amount: formatAmount(amount), periodDays: meta.periodDays, allowanceId, capId: r.caps[0] }]);
+    return { ok: true, digest: r.digest, allowanceId, say: `Limit set. The agent key can now spend at most ${formatAmount(amount)} on ${meta.category} per ${meta.periodDays === 1 ? "day" : meta.periodDays === 7 ? "week" : `${meta.periodDays} days`}.` };
+  }
+  return payCafe(meta.item ?? "flat-white", allowanceId, s);
+}
+
+/** Pay the café over MPP from an allowance (the food allowance, or a one-shot owner approval). */
+export async function payCafe(item: string, allowanceId: string | undefined, s?: State) {
+  const state = s ?? (await load()).state;
+  const origin = process.env.PUBLIC_ORIGIN ?? "http://localhost:3000";
+  const q = await wallet.cafeQuote(item, origin);
+  let id = allowanceId;
+  if (!id) {
+    const lim = checkLimit(state, "food", q.amount);
+    if (!lim.ok || !lim.allowanceId) return { ok: false, say: "Over the food limit: needs your signature.", needsOwner: await wallet.oneShotBytes(q.label, q.amount) };
+    id = lim.allowanceId;
+  }
+  const r = await wallet.cafePay(item, origin, id, q.amount);
+  await remember([
+    { type: "CATEGORY", address: q.recipient, category: "food" },
+    { type: "PAYMENT", to: q.recipient, name: "Café", amount: formatAmount(q.amount), digest: r.digest, category: "food", at: Date.now(), via: allowanceId ? "owner" : "mpp" },
+  ]);
+  return { ok: true, digest: r.digest, receipt: r.receipt, say: `Paid the café ${formatAmount(q.amount)}. Enjoy your ${q.label.toLowerCase()}.` };
+}
