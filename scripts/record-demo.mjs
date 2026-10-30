@@ -21,7 +21,7 @@ const say = async (text, wait = 3500) => {
 await say("That's Mum");
 await say("that's my gym");
 await say("It's Streamly, a streaming subscription");
-await say("Send Mum her usual", 7000);
+await say("Send Mum her usual", 8000);
 await page.getByRole("button", { name: "Settings" }).click();
 await pause(2500);
 await page.getByRole("button", { name: "Café: flat white" }).click();
@@ -29,7 +29,8 @@ await pause(3500);
 await page.getByRole("button", { name: "Approve with wallet" }).click();
 await pause(5000);
 await say("What am I wasting money on?", 6000);
-await say("yes", 3500);
+await page.getByRole("button", { name: "Cancel Streamly" }).click();
+await pause(3500);
 await page.getByRole("button", { name: "Settings" }).click();
 await pause(1200);
 await page.getByRole("button", { name: "Memory: on" }).click();

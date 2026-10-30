@@ -37,7 +37,17 @@ button, input { font: inherit; color: inherit; }
 .card dd { text-align: right; font-weight: 500; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .approve { width: 100%; min-height: 3rem; margin-top: 0.875rem; border: 0; border-radius: 999px; background: var(--ink); color: var(--bg); font-weight: 600; cursor: pointer; transition: transform 150ms var(--ease); }
 .approve:active { transform: scale(0.98); }
-.countdown { height: 2px; margin-top: 0.875rem; background: var(--moss); transform-origin: left; animation: drain 2s linear forwards; }
+.countdown { height: 2px; margin-top: 0.5rem; background: var(--moss); transform-origin: left; animation: drain linear forwards; }
+.note { margin: 0.75rem 0 0; font-size: 0.9375rem; line-height: 1.35; color: var(--muted); text-wrap: pretty; }
+.note.strong { color: var(--ink); }
+.problem { margin: 0.5rem 0 0; font-size: 0.9375rem; line-height: 1.35; color: var(--danger); overflow-wrap: anywhere; }
+.approve:disabled { opacity: 0.6; cursor: default; }
+.pair { display: contents; }
+.pair:first-child dt, .pair:first-child dd { border-top: 0; }
+.cap { text-transform: capitalize; }
+.link { padding: 0.25rem; border: 0; background: none; color: var(--ink); font-weight: 600; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.dots { display: inline-block; width: 1.5rem; height: 0.375rem; background: radial-gradient(circle closest-side, var(--muted) 90%, transparent) 0 0 / 33.3% 100%; animation: think 1s steps(3) infinite; }
+.loading { color: transparent; border-radius: 0.5rem; background: var(--surface); animation: glow 1.2s ease-in-out infinite alternate; }
 .card .ghost { display: block; margin: 0.5rem auto 0; }
 .done { display: flex; flex-direction: column; align-items: center; gap: 0.875rem; padding-block: 2.25rem; text-align: center; }
 .done p { margin: 0; font-size: 1.125rem; font-weight: 600; text-wrap: balance; }
@@ -73,6 +83,7 @@ button, input { font: inherit; color: inherit; }
 .ghost { min-height: 2.75rem; padding: 0.25rem 0.75rem; border: 0; background: none; color: var(--muted); font-size: 0.9375rem; font-weight: 500; cursor: pointer; }
 .typed { display: flex; gap: 0.25rem; width: 100%; }
 .typed input { flex: 1; min-width: 0; min-height: 2.75rem; padding: 0.5rem 1rem; border: 0; border-radius: 999px; background: var(--surface); }
+.typed input:focus-visible { outline: 1.5px solid var(--line); outline-offset: 0; }
 .typed input::placeholder { color: var(--muted); opacity: 1; }
 
 .settings { height: auto; min-height: 100dvh; overflow: visible; gap: 0.5rem; align-items: stretch; }
@@ -81,15 +92,35 @@ button, input { font: inherit; color: inherit; }
 .settings h2 { margin: 1.25rem 0 0; font-size: 0.875rem; font-weight: 600; color: var(--muted); }
 .settings p { margin: 0.25rem 0; }
 .row-button { width: 100%; min-height: 3rem; padding: 0 1rem; border: 0; border-radius: 0.875rem; background: var(--surface); text-align: left; font-weight: 500; cursor: pointer; }
-.limit { display: flex; justify-content: space-between; padding: 0.625rem 1rem; border-radius: 0.875rem; background: var(--surface); text-transform: capitalize; font-variant-numeric: tabular-nums; }
+.row { display: flex; justify-content: space-between; gap: 1rem; padding: 0.625rem 1rem; border-radius: 0.875rem; background: var(--surface); color: inherit; text-decoration: none; font-variant-numeric: tabular-nums; }
+.row span:last-child { color: var(--muted); text-align: right; }
+.row-button + .row-button, .row + .row { margin-top: 0.25rem; }
 
 @keyframes listen { from { transform: scale(1); opacity: 0.8; } to { transform: scale(1.55); opacity: 0; } }
 @keyframes rise { from { opacity: 0; transform: translateY(0.5rem); } to { opacity: 1; transform: none; } }
+@keyframes think { from { opacity: 0.3; } to { opacity: 1; } }
+@keyframes glow { from { opacity: 0.5; } to { opacity: 1; } }
 @keyframes drain { to { transform: scaleX(0); } }
 @media (prefers-reduced-motion: reduce) {
   .orb, .approve { transition: none; }
   .card { animation: none; }
   .orb[data-on="true"] { transform: none; }
   .orb[data-on="true"]::after { animation: none; opacity: 0.8; transform: scale(1.2); }
-  .countdown { animation: none; }
+  .countdown, .dots, .loading { animation: none; }
+}
+
+/* Short phones: the money controls must never fall below the fold. */
+@media (max-height: 680px) {
+  .app { padding: 0.5rem 1rem 0.5rem; }
+  .menu { top: 0.25rem; right: 0.5rem; }
+  .stage[data-card="true"] { padding-top: 0.875rem; gap: 0.625rem; }
+  .stage[data-card="true"] .balance { font-size: 1.25rem; padding-right: 2.5rem; align-self: flex-start; }
+  .card { padding: 0.75rem 0.875rem; border-radius: 1rem; }
+  .amount { margin: 0.25rem 0 0.5rem; font-size: 1.75rem; }
+  .card dt, .card dd { padding: 0.3125rem 0; font-size: 0.875rem; }
+  .note { margin-top: 0.5rem; font-size: 0.875rem; }
+  .approve { min-height: 2.75rem; margin-top: 0.5rem; }
+  .dock { gap: 0.375rem; }
+  .words { min-height: 2.5rem; }
+  .orb { width: 3.25rem; height: 3.25rem; }
 }

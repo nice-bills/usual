@@ -20,8 +20,15 @@ describe("parseRules", () => {
     ["pay for my coffee at the café", { kind: "cafe", item: "flat-white" }],
     ["remember that Kofi is my landlord", { kind: "remember", note: "Kofi is my landlord" }],
     ["don't let me spend more than 3 on food a day", { kind: "set_limit", category: "food", amount: "3", periodDays: 1 }],
+    ["that's not Mum", { kind: "forget", name: "Mum" }],
+    ["forget my gym", { kind: "forget", name: "Gym" }],
     ["hello there", { kind: "unknown" }],
   ])("%s", (text, want) => expect(parseRules(text, ctx)).toEqual(want));
+
+  it("lets the user skip a question", () => {
+    expect(parseRules("not sure", asking)).toEqual({ kind: "skip" });
+    expect(parseRules("not sure", ctx)).toEqual({ kind: "unknown" });
+  });
 
   it("reads answers to 'Who's that?'", () => {
     expect(parseRules("That's Mum.", asking)).toEqual({ kind: "name", name: "Mum", relation: "mum", category: "family" });

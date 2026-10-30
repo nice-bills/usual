@@ -15,6 +15,8 @@ export type Action =
   | { kind: "balance" }
   | { kind: "cafe"; item?: string }
   | { kind: "remember"; note: string }
+  | { kind: "skip" }
+  | { kind: "forget"; name: string }
   | { kind: "unknown"; say?: string };
 
 export type Context = { asking?: { address: string } | null; contacts: string[] };
@@ -45,6 +47,10 @@ const title = (s: string) => s.replace(/\b\w/g, (c) => c.toUpperCase());
 export function parseRules(raw: string, ctx: Context): Action {
   const t = clean(raw.toLowerCase().replace(/[’]/g, "'"));
   if (!t) return { kind: "unknown" };
+
+  if (ctx.asking && /^(skip|pass|not sure|no idea|i don'?t know|dunno|ask me later|later)\b/.test(t)) return { kind: "skip" };
+  const wrong = t.match(/^(?:no,?\s*)?(?:that'?s not|that isn'?t|it'?s not)\s+(?:my\s+)?(.+)$/) ?? t.match(/^(?:forget|remove|delete)\s+(?:my\s+|about\s+)?(.+)$/);
+  if (wrong) return { kind: "forget", name: title(clean(wrong[1])) };
 
   // Answer to "Who's that?"
   const naming = t.match(/^(?:that'?s|that is|it'?s|it is|this is|they'?re)\s+(?:my\s+|the\s+|a\s+)?(.+)$/);
@@ -111,6 +117,8 @@ const TOOLS = [
   { name: "balance", description: "How much money the user has.", properties: {}, required: [] },
   { name: "cafe", description: "Pay the café for an item.", properties: { item: { type: "string", enum: ["flat-white", "croissant", "breakfast"] } }, required: [] },
   { name: "remember", description: "User asks Usual to remember a fact or correction.", properties: { note: { type: "string" } }, required: ["note"] },
+  { name: "skip", description: "User doesn't know or won't say who the wallet is.", properties: {}, required: [] },
+  { name: "forget", description: "User says a remembered name is wrong, or asks to forget someone.", properties: { name: { type: "string" } }, required: ["name"] },
   { name: "unknown", description: "Nothing above fits; reply briefly.", properties: { say: { type: "string" } }, required: [] },
 ].map((t) => ({ type: "function" as const, function: { name: t.name, description: t.description, parameters: { type: "object", properties: t.properties, required: t.required } } }));
 

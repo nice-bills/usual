@@ -42,6 +42,11 @@ describe('Usual core flows (mock mode)', { serial: true }, () => {
     await expect(screen.getByTestId('status')).toContainText('Paid the café 4.50.');
   });
 
+  test('refuses to overspend', async ({ screen }) => {
+    await say(screen, 'Send Mum 9000');
+    await expect(screen.getByTestId('say')).toContainText('more than you have');
+  });
+
   test('unknown people get a question, not a guess', async ({ screen }) => {
     await say(screen, 'send Dad 20');
     await expect(screen.getByTestId('say')).toHaveText("Who's Dad?");
@@ -50,9 +55,29 @@ describe('Usual core flows (mock mode)', { serial: true }, () => {
   test('spending summary spots the price rise and offers to cancel', async ({ screen }) => {
     await say(screen, 'What am I wasting money on?');
     await expect(screen.getByTestId('say')).toContainText('Your gym went from 30 to 35');
-    await expect(screen.getByTestId('say')).toContainText('Cancel Streamly?');
-    await say(screen, 'yes');
+    await screen.getByRole('button', 'Cancel Streamly').tap();
     await expect(screen.getByTestId('say')).toContainText('Streamly is marked cancelled');
+  });
+
+  test('a wrong name can be taken back', async ({ screen }) => {
+    await say(screen, 'forget Gym');
+    await expect(screen.getByTestId('say')).toContainText('Forgotten');
+  });
+
+  test('cancel stops an automatic payment', async ({ screen }) => {
+    await say(screen, 'Send Mum her usual');
+    await screen.getByRole('button', 'Cancel payment').tap();
+    await expect(screen.getByText('Cancelled. Nothing was sent.')).toBeVisible();
+    await expect(screen.getByTestId('balance')).toHaveText('408.00 USDC');
+    await new Promise((r) => setTimeout(r, 3500));
+    await expect(screen.getByTestId('balance')).toHaveText('408.00 USDC');
+  });
+
+  test('a double tap on approve pays once', async ({ screen }) => {
+    await say(screen, 'Send Mum 100');
+    await screen.getByRole('button', 'Approve with wallet').doubleTap();
+    await expect(screen.getByTestId('status')).toContainText('Sent 100 USDC to Mum.');
+    await expect(screen.getByTestId('balance')).toHaveText('308.00 USDC');
   });
 
   test('memory off: Usual forgets Mum', async ({ screen }) => {

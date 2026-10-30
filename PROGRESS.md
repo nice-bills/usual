@@ -44,6 +44,8 @@
 - Demo video recorded (`demo/usual-demo.mp4`, 65 s, mock mode, typed).
 - `BLOG.md` drafted, README proof filled (36 memories on Mainnet).
 
+- UI/UX audit (30 Oct): fixed off-screen Approve/Cancel on short phones, double-tap double pay, talking during the countdown, overdraft offered as approvable, missing memory-error notice, no way to correct or skip a name, no feedback on an empty hold, no first-use hint or loading state, summary as a card, what Usual remembers and activity now visible in Settings, café counted as food.
+
 ### Next (owner)
 1. Create the empty GitHub repo `nice-bills/usual`, add the remote, push.
 2. Deploy: import the repo in Vercel, or `vercel login` then deploy. Env vars from `.env`, but not `OWNER_SUI_PRIVATE_KEY` or payee keys; set `OWNER_ADDRESS` and `PUBLIC_ORIGIN`.

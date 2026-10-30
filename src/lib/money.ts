@@ -36,4 +36,10 @@ export function formatAmount(base: bigint | string | number): string {
   return neg ? `-${out}` : out;
 }
 
+/** Balances always show cents: 458 -> "458.00", 4.825 stays. */
+export function formatBalance(base: bigint | string | number): string {
+  const s = formatAmount(base);
+  return s.includes(".") ? s : `${s}.00`;
+}
+
 export const shortAddr = (a: string) => `${a.slice(0, 4)}…${a.slice(-2)}`;

@@ -82,13 +82,14 @@ export function validateIntent(s: State, intent: Intent, now = Date.now()): Vali
   if (r.kind === "none") return { ok: false, ask: `Who's ${intent.to}?` };
   if (r.kind === "many") return { ok: false, ask: `Which ${intent.to}? ${r.options.map((c) => c.name).join(" or ")}?` };
   const contact = r.contact;
+  const cancelled = s.subscriptions[contact.address]?.cancelled;
+  if (cancelled) return { ok: false, ask: `You cancelled ${contact.name}. I won't pay it unless you set it up again.` };
   const usual = s.usuals[contact.name.toLowerCase()];
   let amount: bigint | null = null;
   let reason = "";
   if (intent.amount != null && intent.amount !== "") {
     amount = parseAmount(intent.amount);
     if (amount == null) return { ok: false, ask: `How much should I send ${contact.name}?` };
-    reason = "amount you said";
   } else if (usual) {
     amount = parseAmount(usual.amount);
     reason = usual.count ? `like the last ${usual.count} times` : "your usual";

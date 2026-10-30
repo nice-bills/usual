@@ -41,6 +41,11 @@ describe("validateIntent", () => {
     expect(validateIntent(reduce(base), { to: "Mum", amount: "loads" }, now)).toMatchObject({ ok: false });
   });
 
+  it("refuses a cancelled subscription", () => {
+    const s = reduce([...base, { type: "SUBSCRIPTION", name: "Mum", address: MUM, amount: "5", cadenceDays: 30, lastAt: 0, cancelled: true, v: 2 }]);
+    expect(validateIntent(s, { to: "Mum" }, now)).toMatchObject({ ok: false });
+  });
+
   it("goes over the limit once this window's spend is counted", () => {
     const s = reduce([...base, { type: "PAYMENT", to: MUM, amount: "80", digest: "x", category: "family", at: now - DAY, via: "agent", v: 2 }]);
     const v = validateIntent(s, { to: "Mum" }, now);

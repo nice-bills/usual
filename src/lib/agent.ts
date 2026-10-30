@@ -3,7 +3,7 @@
 import { env } from "./env";
 import { checkLimit, inferRecurring, validateIntent, type ChainPayment, type Recurring } from "./insights";
 import { load, remember } from "./memory";
-import { formatAmount, parseAmount, shortAddr } from "./money";
+import { formatAmount, formatBalance, parseAmount, shortAddr } from "./money";
 import { parse, type Action } from "./parse";
 import { categoryFor, nameForAddress, resolveContact, type Category, type Rec, type State } from "./records";
 import * as wallet from "./wallet";
@@ -19,6 +19,8 @@ export type Proposal =
   | { type: "limit"; category: Category; amount: string; periodDays: number }
   | { type: "cafe"; item: string; label: string; amount: string; path: wallet.Path; overLimit?: string; balanceAfter: string };
 
+export type Insight = { rows: { label: string; value: string }[]; note?: string };
+
 export type Reply = {
   heard: string;
   by: "rules" | "llm";
@@ -26,6 +28,7 @@ export type Reply = {
   say: string;
   understood?: string;
   proposal?: Proposal;
+  insight?: Insight;
   asking?: Question | null;
   followUp?: Action | null;
   remembered: number;
@@ -50,7 +53,7 @@ export async function snapshot(fresh = false, skip: string[] = []) {
   return {
     owner: wallet.owner(),
     symbol: env.symbol,
-    balance: formatAmount(bal),
+    balance: formatBalance(bal),
     memory: { count: mem.records.length, source: mem.source, pending: mem.pending, error: mem.error },
     state: mem.state,
     questions: questionsFrom(hist, mem.state, skip),
@@ -82,6 +85,22 @@ async function run(a: Action, s: State, ctx: TalkContext): Promise<Out> {
   switch (a.kind) {
     case "name": return name(a, s, ctx);
     case "pay": return pay(a, s);
+    case "skip": {
+      const skip = [...(ctx.skip ?? []), ...(ctx.asking ? [ctx.asking.address] : [])];
+      const next = questionsFrom(await wallet.history(), s, skip)[0] ?? null;
+      return { say: next ? "OK, skipping that one." : "OK. That's everyone for now.", asking: next, remembered: 0 };
+    }
+    case "forget": {
+      const r = resolveContact(s, a.name);
+      if (r.kind !== "one") return { say: r.kind === "none" ? `I don't know a ${a.name}.` : `Which ${a.name}?`, remembered: 0 };
+      const c = r.contact;
+      const usual = s.usuals[c.name.toLowerCase()];
+      const sub = s.subscriptions[c.address];
+      const n = await write([{ ...c, removed: true }, ...(usual ? [{ ...usual, removed: true }] : []), ...(sub ? [{ ...sub, removed: true }] : [])]);
+      const contacts = Object.fromEntries(Object.entries(s.contacts).filter(([, x]) => x.address !== c.address));
+      const next = questionsFrom(await wallet.history(), { ...s, contacts }, ctx.skip ?? [])[0] ?? null;
+      return { say: `Forgotten. ${c.name} is gone from your memory.`, asking: next, remembered: n };
+    }
     case "set_usual": {
       const r = resolveContact(s, a.to);
       const amount = parseAmount(a.amount);
@@ -106,7 +125,11 @@ async function run(a: Action, s: State, ctx: TalkContext): Promise<Out> {
       const subs = Object.values(s.subscriptions).filter((x) => !x.cancelled);
       if (!subs.length) return { say: "I don't know any subscriptions yet.", remembered: 0 };
       const total = subs.reduce((t, x) => t + (parseAmount(x.amount) ?? 0n), 0n);
-      return { say: `${subs.map((x) => `${x.name} ${x.amount}`).join(", ")}. About ${formatAmount(total)} ${env.symbol} a month.`, remembered: 0 };
+      return {
+        say: `${subs.map((x) => `${x.name} ${x.amount}`).join(", ")}. About ${formatAmount(total)} ${env.symbol} a month.`,
+        insight: { rows: subs.map((x) => ({ label: x.name, value: x.amount })), note: `About ${formatAmount(total)} ${env.symbol} a month.` },
+        remembered: 0,
+      };
     }
     case "cancel": {
       const sub = Object.values(s.subscriptions).find((x) => x.name.toLowerCase().includes(a.name.toLowerCase()) || a.name.toLowerCase().includes(x.name.toLowerCase()));
@@ -116,7 +139,7 @@ async function run(a: Action, s: State, ctx: TalkContext): Promise<Out> {
     }
     case "balance": {
       const bal = await wallet.balance();
-      return { say: `You have ${formatAmount(bal)} ${env.symbol}.`, remembered: 0 };
+      return { say: `You have ${formatBalance(bal)} ${env.symbol}.`, remembered: 0 };
     }
     case "cafe": return cafeProposal(a.item ?? "flat-white", s);
     case "remember": {
@@ -166,18 +189,18 @@ async function pay(a: Extract<Action, { kind: "pay" }>, s: State): Promise<Out> 
   const v = validateIntent(s, { to: a.to, amount: a.amount });
   if (!v.ok) return { say: v.ask, remembered: 0 };
   const { plan } = v;
-  const sub = s.subscriptions[plan.contact.address];
-  if (sub?.cancelled) return { say: `You cancelled ${sub.name}. I won't pay it unless you set it up again.`, remembered: 0 };
+  const short = plan.amount - (await wallet.balance());
+  if (short > 0n) return { say: `That's ${formatAmount(short)} ${env.symbol} more than you have.`, remembered: 0 };
   const allowanceId = plan.limit.ok ? plan.limit.allowanceId : undefined;
   const p = await wallet.preview(plan.contact.address, plan.amount, allowanceId);
   if (!p.ok && p.path === "agent") return { say: `The chain refused it: ${p.error}.`, remembered: 0 };
   const overLimit = plan.limit.ok ? undefined : `over your ${plan.category} limit (${formatAmount(plan.limit.remaining)} left)`;
   const n = await write([{ type: "MENTION", name: plan.contact.name, at: Date.now() }]);
-  const understood = `${plan.amountText} ${env.symbol} to ${plan.contact.name} (${shortAddr(plan.contact.address)})${plan.reason ? `, ${plan.reason}` : ""} · balance after: ${formatAmount(p.balanceAfter)}`;
+  const understood = `${plan.amountText} ${env.symbol} to ${plan.contact.name} (${shortAddr(plan.contact.address)})${plan.reason ? `, ${plan.reason}` : ""} · balance after: ${formatBalance(p.balanceAfter)}`;
   return {
     say: overLimit ? `That's ${overLimit}. It needs your signature.` : p.path === "owner" ? "Sign to send it." : `Sending ${plan.contact.name} ${plan.amountText}.`,
     understood,
-    proposal: { type: "pay", to: plan.contact.name, name: plan.contact.name, address: plan.contact.address, amount: plan.amountText, category: plan.category, path: p.path, balanceAfter: formatAmount(p.balanceAfter), simulated: p.simulated, reason: plan.reason, overLimit },
+    proposal: { type: "pay", to: plan.contact.name, name: plan.contact.name, address: plan.contact.address, amount: plan.amountText, category: plan.category, path: p.path, balanceAfter: formatBalance(p.balanceAfter), simulated: p.simulated, reason: plan.reason, overLimit },
     remembered: n,
   };
 }
@@ -187,12 +210,13 @@ async function cafeProposal(item: string, s: State): Promise<Out> {
   const q = await wallet.cafeQuote(item, origin);
   const lim = checkLimit(s, "food", q.amount);
   const bal = await wallet.balance();
+  if (q.amount > bal) return { say: `That's ${formatAmount(q.amount - bal)} ${env.symbol} more than you have.`, remembered: 0 };
   const overLimit = lim.ok ? undefined : `over your food limit (${formatAmount(lim.remaining)} left today)`;
   const path: wallet.Path = lim.ok && lim.allowanceId ? "agent" : "owner";
   return {
     say: overLimit ? `${q.label} is ${formatAmount(q.amount)}. That's ${overLimit}, so I can't pay it on my own. Sign to approve this one.` : `Paying the café ${formatAmount(q.amount)} for a ${q.label.toLowerCase()}.`,
-    understood: `${q.label} · ${formatAmount(q.amount)} ${env.symbol} to café (${shortAddr(q.recipient)}) over MPP · balance after: ${formatAmount(bal - q.amount)}`,
-    proposal: { type: "cafe", item, label: q.label, amount: formatAmount(q.amount), path, overLimit, balanceAfter: formatAmount(bal - q.amount) },
+    understood: `${q.label} · ${formatAmount(q.amount)} ${env.symbol} to café (${shortAddr(q.recipient)}) over MPP · balance after: ${formatBalance(bal - q.amount)}`,
+    proposal: { type: "cafe", item, label: q.label, amount: formatAmount(q.amount), path, overLimit, balanceAfter: formatBalance(bal - q.amount) },
     remembered: 0,
   };
 }
@@ -202,7 +226,7 @@ async function summary(s: State): Promise<Out> {
   const since = Date.now() - 30 * DAY;
   const byCat = new Map<Category, bigint>();
   for (const p of hist.filter((p) => p.at >= since)) {
-    const c = categoryFor(s, p.to);
+    const c = p.to === wallet.cafeAddress() ? "food" : categoryFor(s, p.to);
     byCat.set(c, (byCat.get(c) ?? 0n) + p.amount);
   }
   const parts = [...byCat].sort((a, b) => Number(b[1] - a[1])).map(([c, v]) => `${formatAmount(v)} on ${c}`);
@@ -225,7 +249,9 @@ async function summary(s: State): Promise<Out> {
     notes.length ? `${notes.join(", and ").replace(/^./, (c) => c.toUpperCase())}.` : "",
     followUp ? `Cancel ${stale!.name}?` : "",
   ].filter(Boolean).join(" ");
-  return { say, followUp, remembered: 0 };
+  const rows = [...byCat].sort((a, b) => Number(b[1] - a[1])).map(([c, v]) => ({ label: c.replace(/^./, (x) => x.toUpperCase()), value: formatAmount(v) }));
+  const note = notes.length ? `${notes.join(", and ").replace(/^./, (c) => c.toUpperCase())}.` : undefined;
+  return { say, followUp, insight: { rows, note }, remembered: 0 };
 }
 
 /** Learning loop: three payments in a row at a new amount become the new usual. */

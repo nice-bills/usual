@@ -46,8 +46,7 @@ export async function load(fresh = false): Promise<Loaded> {
   }
   try {
     const seen = new Map<string, Stamped>();
-    for (const query of QUERIES) {
-      const res = await memwal().recall({ query, limit: 100 });
+    for (const res of await Promise.all(QUERIES.map((query) => memwal().recall({ query, limit: 100 })))) {
       for (const hit of res.results) {
         const r = decode(hit.text);
         if (r) seen.set(hit.blob_id, r);

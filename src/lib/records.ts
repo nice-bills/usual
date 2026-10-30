@@ -7,8 +7,8 @@ export type Category = "family" | "food" | "subscriptions" | "transport" | "shop
 export const CATEGORIES: Category[] = ["family", "food", "subscriptions", "transport", "shopping", "other"];
 
 export type Rec =
-  | { type: "CONTACT"; name: string; address: string; relation?: string; aliases?: string[]; source: "chain+user" | "user" }
-  | { type: "USUAL"; name: string; amount: string; count?: number }
+  | { type: "CONTACT"; name: string; address: string; relation?: string; aliases?: string[]; source: "chain+user" | "user"; removed?: boolean }
+  | { type: "USUAL"; name: string; amount: string; count?: number; removed?: boolean }
   | { type: "LIMIT"; category: Category; amount: string; periodDays: number; allowanceId?: string; capId?: string }
   | { type: "SUBSCRIPTION"; name: string; address: string; amount: string; previousAmount?: string; cadenceDays: number; lastAt: number; cancelled?: boolean; removed?: boolean }
   | { type: "PAYMENT"; to: string; name?: string; amount: string; digest: string; category: Category; at: number; via: "agent" | "owner" | "mpp" }
@@ -82,8 +82,8 @@ export function reduce(recs: Stamped[]): State {
   const s: State = { contacts: {}, usuals: {}, limits: {}, subscriptions: {}, payments: [], categories: {}, prefs: {}, corrections: [], mentions: {}, count: recs.length };
   for (const r of latest.values()) {
     switch (r.type) {
-      case "CONTACT": s.contacts[r.name.toLowerCase()] = r; break;
-      case "USUAL": s.usuals[r.name.toLowerCase()] = r; break;
+      case "CONTACT": if (!r.removed) s.contacts[r.name.toLowerCase()] = r; break;
+      case "USUAL": if (!r.removed) s.usuals[r.name.toLowerCase()] = r; break;
       case "LIMIT": s.limits[r.category] = r; break;
       case "SUBSCRIPTION": if (!r.removed) s.subscriptions[r.address] = r; break;
       case "PAYMENT": s.payments.push(r); break;
