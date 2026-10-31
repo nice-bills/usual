@@ -27,6 +27,13 @@ const recognizer = (): Rec | null => {
   return R ? new R() : null;
 };
 
+// A payment request from a café QR or link, as the sentence the user would have said.
+const REQUESTS: Record<string, string> = {
+  "flat-white": "buy a flat white at the café",
+  croissant: "pay for a croissant at the café",
+  breakfast: "buy a breakfast at the café",
+};
+
 const per = (days: number) => (days === 1 ? "day" : days === 7 ? "week" : days === 30 ? "month" : `${days} days`);
 
 function readVoicePref() {
@@ -67,8 +74,10 @@ export default function Usual() {
   const pressedAt = useRef(0);
   const voiceFailed = useRef(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const orb = useRef<HTMLButtonElement>(null);
   // Guards against a double tap paying twice; state alone updates too late.
   const running = useRef(false);
+  const signingIn = useRef(false);
 
   const speak = useCallback((text: string) => {
     if (!voiceOn || !window.speechSynthesis) return;
@@ -87,15 +96,17 @@ export default function Usual() {
 
   // Owner proves control of the wallet once; the server then accepts this browser.
   useEffect(() => {
-    if (!health || health.mock || !account || authed) return;
+    if (!health || health.mock || !account || authed || signingIn.current) return;
+    signingIn.current = true;
     (async () => {
-      const a = await api<{ message: string; at: number; owner: string }>(`auth?address=${account.address}`);
+      const a = await api<{ message: string; at: number; owner: string; session: boolean }>(`auth?address=${account.address}`);
       if (a.owner !== account.address) return setError(`This isn't the owner wallet. Connect ${a.owner.slice(0, 6)}…${a.owner.slice(-4)}.`);
+      if (a.session) return setAuthed(true);
       const { signature } = await signMessage({ message: new TextEncoder().encode(a.message) });
       await api("auth", { address: account.address, at: a.at, signature });
       setError("");
       setAuthed(true);
-    })().catch((e) => setError(e.message));
+    })().catch((e) => setError(e.message)).finally(() => { signingIn.current = false; });
   }, [health, account, authed, signMessage]);
 
   const refresh = useCallback(async (fresh = false) => {
@@ -189,6 +200,17 @@ export default function Usual() {
     }
   }, [asking, followUp, skip, execute, refresh, speak]);
 
+  // Opened from a café QR: treat the request as if it had been spoken, once the wallet has loaded.
+  useEffect(() => {
+    if (!snap) return;
+    const url = new URL(window.location.href);
+    const request = REQUESTS[url.searchParams.get("request") ?? ""];
+    if (!request) return;
+    url.searchParams.delete("request");
+    window.history.replaceState(null, "", url);
+    send(request); // eslint-disable-line react-hooks/set-state-in-effect
+  }, [snap, send]);
+
   const startTalk = () => {
     if (listening) return;
     const r = recognizer();
@@ -215,6 +237,8 @@ export default function Usual() {
       const text = Array.from(e.results).map((x) => x[0].transcript).join("");
       finalText.current = text;
       setHeard(text);
+      // The orb answers each word. No second mic stream: phones can't share it with speech recognition.
+      orb.current?.animate([{ transform: "scale(1.14)" }, { transform: "scale(1.26)" }, { transform: "scale(1.14)" }], { duration: 260, easing: "ease-out" });
     };
     r.onerror = (e) => {
       if (e.error === "aborted" || e.error === "no-speech") return;
@@ -382,7 +406,7 @@ export default function Usual() {
         </div>
         {ready ? (
           <>
-            <button className="orb" data-on={listening} aria-pressed={listening} aria-label={listening ? "Listening, release to send" : "Hold to talk"} onPointerDown={startTalk} onPointerUp={stopTalk} onPointerCancel={stopTalk} onPointerLeave={() => listening && stopTalk()} onContextMenu={(e) => e.preventDefault()} {...hold} />
+            <button ref={orb} className="orb" data-on={listening} aria-pressed={listening} aria-label={listening ? "Listening, release to send" : "Hold to talk"} onPointerDown={startTalk} onPointerUp={stopTalk} onPointerCancel={stopTalk} onPointerLeave={() => listening && stopTalk()} onContextMenu={(e) => e.preventDefault()} {...hold} />
             {typing ? (
               <form className="typed" onSubmit={(e) => { e.preventDefault(); send(typed); setTyped(""); }}>
                 <input aria-label="Type instead" autoFocus placeholder="Send Mum her usual" value={typed} onChange={(e) => setTyped(e.target.value)} onKeyDown={(e) => e.key === "Escape" && setTyping(false)} onBlur={(e) => { if (!typed && !e.relatedTarget) setTyping(false); }} />

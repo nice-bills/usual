@@ -5,7 +5,7 @@ import { Transaction } from "@mysten/sui/transactions";
 import { addAllowance, createdAllowances, depositToAddressBalance } from "../src/lib/allowances";
 import { agent, executeAndConfirm, ownerAddress, usdcCoins } from "../src/lib/chain";
 import { env } from "../src/lib/env";
-import { flush, remember } from "../src/lib/memory";
+import { flush, remember, unsaved } from "../src/lib/memory";
 import type { Category } from "../src/lib/records";
 
 const owner = Ed25519Keypair.fromSecretKey(env.ownerKey);
@@ -29,4 +29,8 @@ for (const [category, amount, periodDays] of limits) {
   console.log(`${category}: allowance ${allowances[0]} cap ${caps[0]} (${r.digest})`);
   await remember([{ type: "LIMIT", category, amount: String(Math.round(amount * env.scale * 1e6) / 1e6), periodDays, allowanceId: allowances[0], capId: caps[0] }]);
 }
-await flush();
+// A failed write waits in the queue; don't exit until it has landed.
+while (unsaved()) {
+  await new Promise((r) => setTimeout(r, 6000));
+  await flush();
+}

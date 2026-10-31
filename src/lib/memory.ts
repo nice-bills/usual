@@ -23,11 +23,12 @@ let client: MemWal | undefined;
 const memwal = () =>
   (client ??= MemWal.create({ key: env.memwalKey, accountId: env.memwalAccount, serverUrl: env.memwalUrl, namespace: env.memwalNamespace }));
 
-const g = globalThis as unknown as { __usual?: { records: Stamped[]; at: number; pending: Stamped[]; jobs: string[]; mock: Stamped[]; memoryOn: boolean } };
+type Job = { id: string; record: Stamped };
+const g = globalThis as unknown as { __usual?: { records: Stamped[]; at: number; pending: Stamped[]; inflight: Job[]; jobs: string[]; mock: Stamped[]; memoryOn: boolean } };
 // Mock mode starts where `pnpm setup:allowances` leaves a real account: three category limits.
 const mockLimits = (): Stamped[] => ([["family", "100", 7], ["food", "3", 1], ["subscriptions", "60", 30]] as const)
   .map(([category, amount, periodDays], i) => ({ type: "LIMIT", category, amount, periodDays, allowanceId: `0xMOCKALLOW${i}`, capId: `0xMOCKCAP${i}`, v: i + 1 }));
-const mem = (g.__usual ??= { records: [], at: 0, pending: [], jobs: [], mock: mockLimits(), memoryOn: true });
+const mem = (g.__usual ??= { records: [], at: 0, pending: [], inflight: [], jobs: [], mock: mockLimits(), memoryOn: true });
 
 /** Memory on/off toggle for the before/after demo. Off = the app behaves as if it remembers nothing. */
 export const setMemoryOn = (on: boolean) => { mem.memoryOn = on; };
@@ -42,7 +43,7 @@ export async function load(fresh = false): Promise<Loaded> {
   void flush();
   if (!fresh && Date.now() - mem.at < CACHE_MS) {
     const records = [...mem.records, ...mem.pending];
-    return { state: reduce(records), records, source: "cache", pending: mem.pending.length };
+    return { state: reduce(records), records, source: "cache", pending: unsaved() };
   }
   try {
     const seen = new Map<string, Stamped>();
@@ -55,16 +56,17 @@ export async function load(fresh = false): Promise<Loaded> {
     // Writes accepted but not yet indexed still count, so nothing the user just said is lost.
     const fromWalrus = [...seen.values()];
     const known = new Set(fromWalrus.map((r) => `${keyOf(r)}@${r.v}`));
-    const recent = mem.records.filter((r) => Date.now() - r.v < 10 * 60_000 && !known.has(`${keyOf(r)}@${r.v}`));
+    const unconfirmed = new Set(mem.inflight.map((j) => j.record));
+    const recent = mem.records.filter((r) => (unconfirmed.has(r) || Date.now() - r.v < 10 * 60_000) && !known.has(`${keyOf(r)}@${r.v}`));
     mem.records = [...fromWalrus, ...recent];
     mem.at = Date.now();
     const records = [...mem.records, ...mem.pending];
-    return { state: reduce(records), records, source: "walrus", pending: mem.pending.length };
+    return { state: reduce(records), records, source: "walrus", pending: unsaved() };
   } catch (e) {
     // A revoked delegate lands here: Usual no longer knows anything.
     mem.records = [];
     mem.at = 0;
-    return { state: reduce([]), records: [], source: "walrus", error: String((e as Error).message ?? e), pending: mem.pending.length };
+    return { state: reduce([]), records: [], source: "walrus", error: String((e as Error).message ?? e), pending: unsaved() };
   }
 }
 
@@ -82,17 +84,51 @@ export async function remember(recs: Rec[]): Promise<{ stored: Stamped[]; queued
   return { stored, queued: mem.pending.length };
 }
 
+/** Jobs that came back failed. "Accepted" isn't "stored": a job can still fail upstream. */
+export function failedJobs(inflight: Job[], statuses: { job_id: string; status: string }[]) {
+  const by = new Map(statuses.map((s) => [s.job_id, s.status]));
+  return {
+    failed: inflight.filter((j) => by.get(j.id) === "failed"),
+    waiting: inflight.filter((j) => !["done", "failed"].includes(by.get(j.id) ?? "pending")),
+  };
+}
+
+let settledAt = 0;
+/** Put writes that failed after acceptance back on the queue, so nothing is lost. */
+async function settle() {
+  if (!mem.inflight.length || Date.now() - settledAt < 5_000) return;
+  settledAt = Date.now();
+  try {
+    const res = await memwal().getRememberBulkStatus(mem.inflight.map((j) => j.id).slice(0, 20));
+    const { failed, waiting } = failedJobs(mem.inflight, res.results);
+    mem.inflight = waiting;
+    if (failed.length) {
+      const back = new Set(failed.map((j) => j.record));
+      mem.records = mem.records.filter((r) => !back.has(r));
+      mem.pending.push(...back);
+      console.warn(`[memory] ${failed.length} write(s) failed upstream, queued again`);
+    }
+  } catch (e) {
+    console.warn("[memory] couldn't read job status:", (e as Error).message);
+  }
+}
+
+/** Writes not yet confirmed on Walrus. */
+export const unsaved = () => mem.pending.length + mem.inflight.length;
+
 let flushing: Promise<void> | null = null;
 let retryAt = 0;
 /** Send queued writes in batches of 20 (relayer limit: 60 req/min per key; 429 => wait retry_after). */
 export function flush(): Promise<void> {
-  if (flushing || !mem.pending.length || Date.now() < retryAt) return flushing ?? Promise.resolve();
+  if (flushing) return flushing;
   flushing = (async () => {
-    while (mem.pending.length) {
+    await settle();
+    while (mem.pending.length && Date.now() >= retryAt) {
       const batch = mem.pending.slice(0, 20);
       try {
         const res = await memwal().rememberBulk(batch.map((r) => ({ text: encode(r) })));
         mem.jobs.push(...res.job_ids);
+        mem.inflight.push(...res.job_ids.map((id, i) => ({ id, record: batch[i] })));
         mem.pending.splice(0, batch.length);
         mem.records.push(...batch);
       } catch (e) {

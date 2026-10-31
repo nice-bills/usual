@@ -46,6 +46,13 @@
 
 - UI/UX audit (30 Oct): fixed off-screen Approve/Cancel on short phones, double-tap double pay, talking during the countdown, overdraft offered as approvable, missing memory-error notice, no way to correct or skip a name, no feedback on an empty hold, no first-use hint or loading state, summary as a card, what Usual remembers and activity now visible in Settings, café counted as food.
 
+### 31 Oct
+- Added: café counter page with QR (`/cafe`) and `/?request=` deep link; orb pulses on each recognised word.
+- `scripts/live-browser.ts` drives the real UI with a scripted wallet and scripted speech. Passed on testnet: connect, sign-in, hold-to-talk, agent payment, QR link, over-limit approval. It found and we fixed a stale balance after paying, and repeat sign-in prompts.
+- Unregistered delegate key against the real relayer: 401, 0 memories, "Who's Mum?".
+- Writes that fail after acceptance now requeue (`settle` in `memory.ts`).
+- Blocked: since 31 Oct every Walrus Memory write fails upstream (`Enoki API error (400)` ... `MoveCall to disallowed function ...::system::reserve_space`), though `health` reports `write_ready: true`. Reads work. Devnet demo data (TUSD, full-size amounts, namespace `usual-demo`) is seeded and waits on this.
+
 ### Next (owner)
 1. Create the empty GitHub repo `nice-bills/usual`, add the remote, push.
 2. Deploy: import the repo in Vercel, or `vercel login` then deploy. Env vars from `.env`, but not `OWNER_SUI_PRIVATE_KEY` or payee keys; set `OWNER_ADDRESS` and `PUBLIC_ORIGIN`.

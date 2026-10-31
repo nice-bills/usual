@@ -2,14 +2,15 @@ import { cookies } from "next/headers";
 import { z } from "zod";
 import { MOCK } from "@/lib/env";
 import { json } from "@/lib/http";
-import { COOKIE, login, loginMessage } from "@/lib/session";
+import { COOKIE, authorized, login, loginMessage } from "@/lib/session";
 import { owner } from "@/lib/wallet";
 
 /** The message to sign, plus which wallet owns this deployment. */
 export async function GET(req: Request) {
   const address = new URL(req.url).searchParams.get("address") ?? "";
   const at = Date.now();
-  return json({ owner: owner(), mock: MOCK, at, message: loginMessage(address, at) });
+  const session = authorized((await cookies()).get(COOKIE)?.value);
+  return json({ owner: owner(), mock: MOCK, at, session, message: loginMessage(address, at) });
 }
 
 export async function POST(req: Request) {

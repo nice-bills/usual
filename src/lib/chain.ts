@@ -136,6 +136,8 @@ export async function executeAndConfirm(args: { tx: Transaction; signer: Ed25519
   const t = r.Transaction ?? r.FailedTransaction!;
   if (!t.status.success) throw new Error(String(t.status.error?.message ?? "transaction failed"));
   const confirmed = await paced(null, () => client.core.waitForTransaction({ digest: t.digest, include: { balanceChanges: true } }));
+  // Money moved: the next balance and history read must not come from the cache.
+  memo.clear();
   const changes = confirmed.Transaction?.balanceChanges ?? [];
   return { digest: t.digest, confirmed: !!confirmed.Transaction?.status.success, effects: t.effects, changes };
 }

@@ -28,5 +28,5 @@ const plan: [string, string, number][] = [
 const scale = env.scale;
 for (const [who, to, amt] of plan) {
   const r = await executeAndConfirm({ tx: transferTx({ sender: ownerAddress(), to, amount: usdc(amt * scale) }), signer: owner });
-  console.log(`${who.padEnd(10)} ${(amt * scale).toFixed(2).padStart(7)} USDC  ${r.digest}`);
+  console.log(`${who.padEnd(10)} ${(amt * scale).toFixed(2).padStart(7)} ${env.symbol}  ${r.digest}`);
 }
