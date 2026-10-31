@@ -1,6 +1,7 @@
 import { env } from "@/lib/env";
 import { json, owned } from "@/lib/http";
 import { load } from "@/lib/memory";
+import { trace } from "@/lib/trace";
 
 const MAX_AUDIO = 5_000_000;
 
@@ -19,7 +20,13 @@ export const POST = owned(async (req) => {
   form.set("temperature", "0");
   if (typeof language === "string" && /^[a-z]{2}$/.test(language)) form.set("language", language);
   form.set("prompt", `Send Mum her usual. That's my gym. What am I wasting money on? ${names.join(", ")}`);
+  const start = Date.now();
   const res = await fetch(`${env.llmUrl.replace(/\/$/, "")}/audio/transcriptions`, { method: "POST", headers: { authorization: `Bearer ${env.llmKey}` }, body: form, signal: AbortSignal.timeout(15_000) });
-  if (!res.ok) return json({ error: `transcription failed: ${res.status}` }, { status: 502 });
-  return json({ text: String((await res.json()).text ?? "").trim() });
+  if (!res.ok) {
+    trace("whisper-failed", { status: res.status, bytes: audio.size, type: audio.type });
+    return json({ error: `transcription failed: ${res.status}` }, { status: 502 });
+  }
+  const text = String((await res.json()).text ?? "").trim();
+  trace("whisper", { text, ms: Date.now() - start, bytes: audio.size, type: audio.type, language });
+  return json({ text });
 });

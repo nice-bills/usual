@@ -40,6 +40,11 @@ const REQUESTS: Record<string, string> = {
 
 const per = (days: number) => (days === 1 ? "day" : days === 7 ? "week" : days === 30 ? "month" : `${days} days`);
 
+/** Best-effort debug note for the server's session log. */
+const note = (event: string, detail: Record<string, string | number | boolean> = {}) => {
+  fetch("/api/log", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ event, detail }) }).catch(() => {});
+};
+
 const calm = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 /** Money rolls to its new value, so a payment reads as the balance changing, not swapping. */
@@ -161,7 +166,9 @@ export default function Usual({ health }: { health: Health }) {
       if (!res.ok) return;
       audio.src = URL.createObjectURL(await res.blob());
       await audio.play();
-    } catch { /* the words are on screen; a missing voice is not an error */ }
+    } catch (e) {
+      note("voice-failed", { message: (e as Error).message }); // the words are on screen, so this stays silent
+    }
   }, [voiceOn, health]);
 
   const cancelAutoPay = () => {
@@ -171,6 +178,15 @@ export default function Usual({ health }: { health: Health }) {
   };
 
   const ready = health.mock || authed;
+
+  useEffect(() => {
+    const crash = (e: ErrorEvent) => note("page-error", { message: e.message });
+    const rejected = (e: PromiseRejectionEvent) => note("unhandled-rejection", { message: String(e.reason).slice(0, 300) });
+    window.addEventListener("error", crash);
+    window.addEventListener("unhandledrejection", rejected);
+    note("open", { width: window.innerWidth, height: window.innerHeight, agent: navigator.userAgent.slice(0, 200) });
+    return () => { window.removeEventListener("error", crash); window.removeEventListener("unhandledrejection", rejected); };
+  }, []);
 
   // Owner proves control of the wallet once; the server then accepts this browser.
   useEffect(() => {
@@ -248,6 +264,7 @@ export default function Usual({ health }: { health: Health }) {
       refresh().catch(() => {});
     } catch (e) {
       setError((e as Error).message);
+      note("payment-failed", { message: (e as Error).message });
     } finally {
       clearTimeout(slow);
       running.current = false;
@@ -282,7 +299,9 @@ export default function Usual({ health }: { health: Health }) {
     setReply(null);
     setThinking(true);
     try {
+      const started = Date.now();
       const r = await api<Reply>("talk", { text, asking, followUp, skip });
+      note("reply", { ms: Date.now() - started, text });
       setReply(r);
       setThinking(false);
       setUndo(r.undo?.length ? r.undo : null);
@@ -332,7 +351,8 @@ export default function Usual({ health }: { health: Health }) {
     let stream: MediaStream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    } catch {
+    } catch (e) {
+      note("mic-denied", { message: (e as Error).message });
       setListening(false);
       setTyping(true);
       setHint("The microphone is blocked. Allow it, or type instead.");
@@ -376,11 +396,15 @@ export default function Usual({ health }: { health: Health }) {
       partialCall?.abort();
       if (Date.now() - pressedAt.current < 400) return setHint("Keep holding while you talk.");
       setThinking(true);
+      const released = Date.now();
+      note("released", { heldMs: released - pressedAt.current, bytes: chunks.reduce((n, c) => n + c.size, 0) });
       try {
         const text = await hear();
+        note("transcribed", { ms: Date.now() - released, text });
         if (text) await send(text);
         else setHint("I didn't catch that. Try again.");
-      } catch {
+      } catch (e) {
+        note("hearing-failed", { message: (e as Error).message });
         setHint("I couldn't hear that. Try again, or type instead.");
         setTyping(true);
       } finally {

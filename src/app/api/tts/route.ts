@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { env } from "@/lib/env";
 import { json, owned } from "@/lib/http";
+import { trace } from "@/lib/trace";
 
 /** A natural voice for replies. The client stays silent if this fails. */
 export const POST = owned(async (req) => {
@@ -11,6 +12,9 @@ export const POST = owned(async (req) => {
     body: JSON.stringify({ model: "canopylabs/orpheus-v1-english", input: text, voice: "autumn", response_format: "wav" }),
     signal: AbortSignal.timeout(15_000),
   });
-  if (!res.ok) return json({ error: `speech failed: ${res.status}` }, { status: 502 });
+  if (!res.ok) {
+    trace("speech-failed", { status: res.status, text });
+    return json({ error: `speech failed: ${res.status}` }, { status: 502 });
+  }
   return new Response(res.body, { headers: { "content-type": "audio/wav" } });
 });
