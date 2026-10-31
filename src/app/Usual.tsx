@@ -293,6 +293,9 @@ export default function Usual() {
     }
     cancelAutoPay();
     navigator.vibrate?.(10);
+    // The citrus flood grows out of the orb, wherever the layout has put it.
+    const box = orb.current?.getBoundingClientRect();
+    if (box) { document.documentElement.style.setProperty("--ox", `${box.left + box.width / 2}px`); document.documentElement.style.setProperty("--oy", `${box.top + box.height / 2}px`); }
     window.speechSynthesis?.cancel();
     finalText.current = "";
     voiceFailed.current = false;
@@ -420,7 +423,8 @@ export default function Usual() {
   }
 
   return (
-    <main className="app">
+    <main className="app" data-listening={listening}>
+      <div className="flood" aria-hidden="true" />
       <button className="menu" aria-label="Settings" onClick={() => setSettings(true)}><span /><span /></button>
 
       <section className="stage" data-card={cardUp} aria-live="polite">
@@ -476,7 +480,7 @@ export default function Usual() {
         )}
 
         {done && (done.amount ? (
-          <div className="slip" data-tearing={tearing}><article className="receipt">
+          <div className="slip" data-tearing={tearing}><span className="stamp" aria-hidden="true">Paid</span><article className="receipt">
             <p className="said" data-testid="status">{/\. /.test(done.say) ? done.say : done.say.replace(/\.$/, "")}</p>
             <p className="total"><span>Paid</span><span>{done.amount} {symbol}</span></p>
             <dl>
