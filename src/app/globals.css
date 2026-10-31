@@ -76,7 +76,7 @@ button, input { font: inherit; color: inherit; }
 .words p { margin: 0; max-width: 34ch; line-height: 20px; text-wrap: pretty; }
 .heard { font-weight: 500; }
 .say { color: var(--secondary); }
-.fine { font-size: 14px; color: var(--muted); }
+.fine { font-size: 14px; color: var(--muted); overflow-wrap: anywhere; }
 
 .orb {
   position: relative;
