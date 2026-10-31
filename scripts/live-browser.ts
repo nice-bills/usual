@@ -91,8 +91,8 @@ console.log("signed in, balance:", await text("balance"));
 if (mode === "demo") {
   await pause(2500);
   for (let i = 0; i < 3; i++) {
-    const q = (await text("asking")) ?? "";
-    const m = q.match(/0x[0-9a-f]{2}…([0-9a-f]{2})/);
+    const q = (await page.locator(".words").textContent()) ?? "";
+    const m = [...q.matchAll(/0x[0-9a-f]{2}…([0-9a-f]{2})/g)].at(-1);
     const answer = NAMES.find(([a]) => a.endsWith(m?.[1] ?? "--"));
     if (!answer) break;
     await pause(1800);

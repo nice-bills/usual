@@ -55,12 +55,17 @@
 
 - `/ambitious` round: evidence on beliefs, learned limits, fraud guards, mishear set, chain-refusal fallback (refusal proven live), restart-safe queue, chain-based activity, `/proof`, `pnpm rehearse`, replay score, namespace red team (see DECISIONS 32).
 
+- Walrus writes recovered on 31 Oct. Queue flushed with nothing lost (41 memories in `usual`).
+- Full demo passed with writes on: cold start, learned limit approved on chain, agent pays Mum, over-limit café over MPP, summary, proof page. Video: `demo/usual-live.mp4`, scripted wallet and speech, devnet TUSD.
+- Chain-refusal fallback seen live: the weekly family allowance was spent, memory disagreed, and Usual asked for the signature.
+- `pnpm rehearse` passes end to end.
+
 ### Next (owner)
-1. Create the empty GitHub repo `nice-bills/usual`, add the remote, push.
-2. Deploy: import the repo in Vercel, or `vercel login` then deploy. Env vars from `.env`, but not `OWNER_SUI_PRIVATE_KEY` or payee keys; set `OWNER_ADDRESS` and `PUBLIC_ORIGIN`.
-3. Wallet: import the demo owner key into Slush, test sign-in and an approval; hold-to-talk in Chrome; revoke the delegate in the dashboard.
-4. Publish `BLOG.md`, record the voice video, submit the form.
+1. Hold-to-talk with a real mic in Chrome.
+2. Approve once in real Slush (import the demo owner key, testnet).
+3. Revoke the delegate in the dashboard and check "Who's Mum?".
+4. Then record, create the repo, deploy, publish `BLOG.md`, submit from `SUBMISSION.md`.
 
 ### Known risks
-- The write queue lives in process memory: a Vercel cold start can drop queued writes. Fix if it shows up: retry from the client, or keep the queue in the browser.
+- The write queue is a file in the OS temp directory: on Vercel a new instance has an empty one, so a queued write can still be lost there.
 - The app-side window spend (`spentInWindow`) approximates the chain's fixed window. The chain is the real enforcer; the app check only decides which path to offer.

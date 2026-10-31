@@ -70,10 +70,12 @@ Live run on Sui testnet with Walrus Memory on Mainnet. Amounts are `DEMO_SCALE=0
 
 - Walrus Memory account: `0xf66965b7eac1c51d1fc794bdd06dcdf126868ae0280d98ead1b4b2f483835753`
 - Usual's delegate public key: `d8d441451421bd7295e8b3ca304fc0d6a243767f12bad43c339820260154c2b6`
-- Memories on Mainnet in namespace `usual`: 36 (`corepack pnpm proof`)
+- Memories on Mainnet in namespace `usual`: 41, plus the devnet demo namespaces (`corepack pnpm proof`)
 - Blob: https://walruscan.com/mainnet/blob/LVTXo9R9fsVhjIkCdcNJPkYBukiK3O6jmrSPo4PqZVM
 - Blob: https://walruscan.com/mainnet/blob/ABL6tJF2FMX9RJAwa9dHJ1cdoQ4pX46jdLkaOVYnoOE
 - Blob: https://walruscan.com/mainnet/blob/CZKEI8qrlGBx4CTqMnt0UpPqbLLzo275JADpbmmUF48
+
+The demo video (`demo/usual-live.mp4`) ran the real UI with Walrus Memory on Mainnet and full-size amounts on devnet, using TUSD, a test dollar we published there. Wallet signatures and speech were scripted.
 
 Testnet transactions, all executed and confirmed through Tatum's gRPC gateway:
 
