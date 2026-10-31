@@ -12,6 +12,7 @@ type Snapshot = { owner: string; memoryOn: boolean; symbol: string; balance: str
 type Outcome = { say: string; digest?: string; needsOwner?: string; bytes?: string; ok?: boolean; followUp?: Action };
 
 const AUTO_PAY_MS = 3000;
+const SILENCE = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=";
 
 async function api<T>(path: string, body?: unknown): Promise<T> {
   const res = await fetch(`/api/${path}`, body === undefined ? undefined : { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
@@ -138,19 +139,27 @@ export default function Usual() {
   const finalText = useRef("");
   const pressedAt = useRef(0);
   const voiceFailed = useRef(false);
+  const stopHeld = useRef(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const orb = useRef<HTMLButtonElement>(null);
+  const player = useRef<HTMLAudioElement | null>(null);
+  const recorder = useRef<MediaRecorder | null>(null);
   const balanceEl = useRef<HTMLParagraphElement>(null);
   const balanceBox = useRef<DOMRect | null>(null);
   // Guards against a double tap paying twice; state alone updates too late.
   const running = useRef(false);
   const signingIn = useRef(false);
 
-  const speak = useCallback((text: string) => {
-    if (!voiceOn || !window.speechSynthesis) return;
-    window.speechSynthesis.cancel();
-    window.speechSynthesis.speak(new SpeechSynthesisUtterance(text));
-  }, [voiceOn]);
+  const speak = useCallback(async (text: string) => {
+    const audio = player.current;
+    if (!voiceOn || !audio || !health?.llm || health.llm === "rules" || health.mock === undefined) return;
+    try {
+      const res = await fetch("/api/tts", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: text.slice(0, 190) }) });
+      if (!res.ok) return;
+      audio.src = URL.createObjectURL(await res.blob());
+      await audio.play();
+    } catch { /* the words are on screen; a missing voice is not an error */ }
+  }, [voiceOn, health]);
 
   const cancelAutoPay = () => {
     if (timer.current) clearTimeout(timer.current);
@@ -284,8 +293,85 @@ export default function Usual() {
     send(request); // eslint-disable-line react-hooks/set-state-in-effect
   }, [snap, send]);
 
+  /** Holds record for Whisper. Partial audio is transcribed as you talk, the full clip on release. */
+  const startWhisper = async () => {
+    cancelAutoPay();
+    navigator.vibrate?.(10);
+    const box = orb.current?.getBoundingClientRect();
+    if (box) { document.documentElement.style.setProperty("--ox", `${box.left + box.width / 2}px`); document.documentElement.style.setProperty("--oy", `${box.top + box.height / 2}px`); }
+    pressedAt.current = Date.now();
+    stopHeld.current = false;
+    setHeard("");
+    setReply(null);
+    setDone(null);
+    setHint("");
+    setError("");
+    setListening(true);
+    let stream: MediaStream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch {
+      setListening(false);
+      setTyping(true);
+      setHint("The microphone is blocked. Allow it, or type instead.");
+      return;
+    }
+    // Released during the permission prompt: nothing was said.
+    if (stopHeld.current) {
+      stream.getTracks().forEach((t) => t.stop());
+      setListening(false);
+      setHint("Mic is on. Hold again and talk.");
+      return;
+    }
+    const chunks: Blob[] = [];
+    const mime = ["audio/webm", "audio/mp4"].find((m) => MediaRecorder.isTypeSupported(m)) ?? "";
+    const media = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+    recorder.current = media;
+    const hear = async () => {
+      const form = new FormData();
+      form.set("audio", new File(chunks, mime.includes("mp4") ? "speech.mp4" : "speech.webm", { type: mime || "audio/webm" }));
+      const res = await fetch("/api/stt", { method: "POST", body: form });
+      if (!res.ok) throw new Error("transcription failed");
+      return (await res.json() as { text: string }).text;
+    };
+    let partial: Promise<unknown> | null = null;
+    media.ondataavailable = (e) => {
+      if (e.data.size) chunks.push(e.data);
+      if (partial || media.state !== "recording") return;
+      partial = hear().then((text) => {
+        if (media.state !== "recording" || !text) return;
+        setHeard(text);
+        orb.current?.animate([{ transform: "scale(1.12)" }, { transform: "scale(1.2)" }, { transform: "scale(1.12)" }], { duration: 260, easing: "cubic-bezier(0.22, 1, 0.36, 1)" });
+      }).catch(() => {}).finally(() => { partial = null; });
+    };
+    media.onstop = async () => {
+      stream.getTracks().forEach((t) => t.stop());
+      recorder.current = null;
+      setListening(false);
+      if (Date.now() - pressedAt.current < 400) return setHint("Keep holding while you talk.");
+      setThinking(true);
+      try {
+        const text = await hear();
+        if (text) send(text);
+        else setHint("I didn't catch that. Try again.");
+      } catch {
+        setHint("I couldn't hear that. Try again, or type instead.");
+        setTyping(true);
+      } finally {
+        setThinking(false);
+      }
+    };
+    media.start(1500);
+  };
+
   const startTalk = () => {
     if (listening) return;
+    // iOS only plays audio from an element first touched inside a gesture.
+    player.current ??= new Audio();
+    player.current.pause();
+    player.current.src = SILENCE;
+    player.current.play().catch(() => {});
+    if (health && health.llm !== "rules" && typeof MediaRecorder !== "undefined" && navigator.mediaDevices) return startWhisper();
     const r = recognizer();
     if (!r) {
       setHint("Voice doesn't work in this browser. Type instead.");
@@ -297,8 +383,7 @@ export default function Usual() {
     // The citrus flood grows out of the orb, wherever the layout has put it.
     const box = orb.current?.getBoundingClientRect();
     if (box) { document.documentElement.style.setProperty("--ox", `${box.left + box.width / 2}px`); document.documentElement.style.setProperty("--oy", `${box.top + box.height / 2}px`); }
-    window.speechSynthesis?.cancel();
-    finalText.current = "";
+        finalText.current = "";
     voiceFailed.current = false;
     pressedAt.current = Date.now();
     setHeard("");
@@ -336,7 +421,11 @@ export default function Usual() {
       setListening(false);
     }
   };
-  const stopTalk = () => rec.current?.stop();
+  const stopTalk = () => {
+    if (recorder.current?.state === "recording") recorder.current.stop();
+    else if (!recorder.current) rec.current?.stop();
+    stopHeld.current = true;
+  };
 
   const hold = {
     onKeyDown: (e: React.KeyboardEvent) => { if ((e.key === " " || e.key === "Enter") && !e.repeat) { e.preventDefault(); startTalk(); } },

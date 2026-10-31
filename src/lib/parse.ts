@@ -71,6 +71,14 @@ export function parseRules(raw: string, ctx: Context): Action {
     if (category) return { kind: "set_limit", category, amount: clean(lim.amt), periodDays: PERIOD[lim.per] };
   }
 
+  // A pending question means a bare phrase is its answer, even if it says "subscription".
+  if (ctx.asking && !naming && !/^(send|pay|give|transfer|what|where|how|show|cancel|limit|cap|buy|order|remember|forget)\b/.test(t)) {
+    const relation = t.split(/\s+/).find((w) => RELATIONS[w]);
+    const head = clean(t.split(/,|\s+(?:a|an|the|my|for)\s+/)[0]);
+    const name = title(head.replace(/\b(membership|subscription|account)\b/g, "").trim() || head);
+    return { kind: "name", name, relation: relation && RELATIONS[relation] === "family" ? relation : undefined, category: categoryOf(t) };
+  }
+
   if (/\b(balance|how much (do i|have i) (have|got)|what do i have)\b/.test(t)) return { kind: "balance" };
   if (/\b(wast\w*|where('?s| is| does) my money|spending|spent|habits?)\b/.test(t)) return { kind: "summary" };
   if (/\bsubscriptions?\b/.test(t) && !/\bcancel\b/.test(t)) return { kind: "subscriptions" };

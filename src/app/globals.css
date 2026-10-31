@@ -74,7 +74,7 @@ button, input { font: inherit; color: inherit; }
 .done { display: flex; flex-direction: column; align-items: center; gap: 12px; padding-block: 32px; text-align: center; }
 .done p { margin: 0; font-size: 18px; font-weight: 500; text-wrap: balance; }
 .check { position: relative; width: 48px; height: 48px; border-radius: 50%; background: #0a3a2a; }
-.check::after { content: ""; position: absolute; left: 17px; top: 12px; width: 14px; height: 22px; border: solid var(--bg); border-width: 0 2px 2px 0; transform: rotate(40deg) scale(0.7); }
+.check::after { content: ""; position: absolute; left: 17px; top: 12px; width: 14px; height: 22px; border: solid #f6f4e6; border-width: 0 2px 2px 0; transform: rotate(40deg) scale(0.7); }
 
 /* The moment: a paper slip off the counter. Nothing else on the screen has weight. */
 .slip { position: relative; width: min(100%, 320px); filter: drop-shadow(0 12px 24px rgb(0 0 0 / 0.3)); animation: print 760ms steps(16) both; }
@@ -120,8 +120,8 @@ button, input { font: inherit; color: inherit; }
 }
 .orb::after { content: ""; position: absolute; inset: 0; border-radius: 50%; border: 2px solid var(--citrus); opacity: 0; }
 /* Holding floods the screen from the orb: the app turns its whole attention to you. */
-.flood { position: fixed; inset: 0; z-index: 0; background: var(--citrus); clip-path: circle(0 at var(--ox, 50%) var(--oy, 85%)); transition: clip-path 300ms var(--ease); pointer-events: none; }
-[data-listening="true"] .flood { clip-path: circle(150vmax at var(--ox, 50%) var(--oy, 85%)); transition-duration: 420ms; }
+.flood { position: fixed; inset: 0; z-index: 0; background: var(--citrus); clip-path: circle(0 at var(--ox, 50%) var(--oy, 85%)); visibility: hidden; transition: clip-path 300ms var(--ease), visibility 0s 300ms; pointer-events: none; }
+[data-listening="true"] .flood { visibility: visible; clip-path: circle(150vmax at var(--ox, 50%) var(--oy, 85%)); transition: clip-path 420ms var(--ease); }
 .stage, .dock { position: relative; z-index: 1; }
 [data-listening="true"] { --ink: #0a3a2a; --secondary: #0a3a2a; --muted: #2f5a46; }
 [data-listening="true"] .stage { opacity: 0; }

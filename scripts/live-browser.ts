@@ -59,6 +59,7 @@ await page.addInitScript({ content: `(() => {
   const reg = (api) => api.register(wallet);
   window.addEventListener("wallet-standard:app-ready", (e) => reg(e.detail));
   window.dispatchEvent(new CustomEvent("wallet-standard:register-wallet", { detail: reg }));
+  window.MediaRecorder = undefined; // scripted speech goes through the Web Speech path
   window.SpeechRecognition = class {
     start() { window.__sr = this; }
     stop() { setTimeout(() => this.onend && this.onend(), 120); }

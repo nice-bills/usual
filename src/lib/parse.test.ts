@@ -25,6 +25,12 @@ describe("parseRules", () => {
     ["hello there", { kind: "unknown" }],
   ])("%s", (text, want) => expect(parseRules(text, ctx)).toEqual(want));
 
+  it("takes a bare phrase as the answer to a pending question", () => {
+    expect(parseRules("Mum", asking)).toMatchObject({ kind: "name", name: "Mum", category: "family" });
+    expect(parseRules("Streamly streaming subscription", asking)).toMatchObject({ kind: "name", category: "subscriptions" });
+    expect(parseRules("what am I wasting money on", asking)).toEqual({ kind: "summary" });
+  });
+
   it("lets the user skip a question", () => {
     expect(parseRules("not sure", asking)).toEqual({ kind: "skip" });
     expect(parseRules("not sure", ctx)).toEqual({ kind: "unknown" });
