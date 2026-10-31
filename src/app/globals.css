@@ -155,8 +155,8 @@ button, input { font: inherit; color: inherit; }
 .check::after { animation: tick 240ms var(--ease) 120ms both; }
 .done[data-tearing="true"], .slip[data-tearing="true"] { opacity: 0; transition: opacity 280ms var(--ease), transform 280ms var(--ease); }
 .slip[data-tearing="true"] { transform: translateY(-16px) rotate(-2deg); }
-.settings > * { animation: row 240ms var(--ease) both; }
-.settings { animation: sheet 300ms cubic-bezier(0.32, 0.72, 0, 1); }
+.sheet > * { animation: row 240ms var(--ease) both; }
+.sheet { animation: sheet 300ms cubic-bezier(0.32, 0.72, 0, 1); }
 
 .ghost { min-height: 44px; padding: 4px 12px; border: 0; border-radius: 8px; background: none; color: var(--secondary); font-size: 15px; font-weight: 500; cursor: pointer; text-decoration: none; transition: background-color 150ms var(--ease); }
 .ghost:hover { background: var(--surface); }
@@ -203,7 +203,7 @@ button, input { font: inherit; color: inherit; }
 @media (prefers-reduced-motion: reduce) {
   .orb, .approve, .ghost, .row-button, .slip, .done, .flood { transition: none; }
   .stamp { animation: none; opacity: 0.9; }
-  .card, .slip, .w, .pill, .check, .check::after, .tally path, .settings, .settings > *, .card dl > *, .card dl .pair > *, .approve { animation: none; }
+  .card, .slip, .w, .pill, .check, .check::after, .tally path, .sheet, .sheet > *, .card dl > *, .card dl .pair > *, .approve { animation: none; }
   .orb[data-on="true"] { transform: none; }
   .orb[data-on="true"]::after { animation: none; opacity: 0.8; transform: scale(1.2); }
   .orb[data-state="invite"]::after, .orb[data-state="done"]::after, .orb[data-state="error"], .orb[data-state="working"]::before, .countdown, .working i { animation: none; }
@@ -212,7 +212,7 @@ button, input { font: inherit; color: inherit; }
 }
 
 /* Short phones: the money controls must never fall below the fold. */
-@media (max-height: 680px) {
+@media (max-height: 760px) {
   .app { padding: 8px 16px; }
   .menu { top: 4px; right: 8px; }
   .stage[data-card="true"] { padding-top: 12px; gap: 8px; }
@@ -227,6 +227,6 @@ button, input { font: inherit; color: inherit; }
   .words { min-height: 40px; }
   .orb { width: 64px; height: 64px; }
   .balance { font-size: 56px; }
-  .amount { font-size: 40px; }
+  .amount { font-size: 44px; }
   .card { padding: 12px 12px 24px; }
 }

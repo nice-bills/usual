@@ -1,11 +1,14 @@
 "use client";
 // One balance, one orb, one card at a time. Holds no user knowledge of its own:
 // everything shown comes from /api/state (Walrus Memory).
-import { ConnectButton, useCurrentAccount, useSignPersonalMessage, useSignTransaction } from "@mysten/dapp-kit";
+import dynamic from "next/dynamic";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Proposal, Question, Reply } from "@/lib/agent";
 import type { Action } from "@/lib/parse";
-import type { State } from "@/lib/records";
+import type { Rec as MemoryRecord, State } from "@/lib/records";
+import type { WalletApi } from "./Wallet";
+
+const Wallet = dynamic(() => import("./Wallet"), { ssr: false });
 
 type Health = { mock: boolean; network: string; tatum: boolean; walrusMemory: boolean; llm: string };
 type Snapshot = { owner: string; memoryOn: boolean; symbol: string; balance: string; state: State; activity: { name: string; amount: string; digest: string }[]; memory: { count: number; source: string; pending: number; error?: string }; questions: Question[] };
@@ -110,11 +113,10 @@ function readVoicePref() {
   }
 }
 
-export default function Usual() {
-  const account = useCurrentAccount();
-  const { mutateAsync: signMessage } = useSignPersonalMessage();
-  const { mutateAsync: signTx } = useSignTransaction();
-  const [health, setHealth] = useState<Health | null>(null);
+export default function Usual({ health }: { health: Health }) {
+  const [wallet, setWallet] = useState<WalletApi | null>(null);
+  const account = wallet?.address;
+  const [undo, setUndo] = useState<MemoryRecord[] | null>(null);
   const [authed, setAuthed] = useState(false);
   const [snap, setSnap] = useState<Snapshot | null>(null);
   const [loadError, setLoadError] = useState("");
@@ -152,7 +154,7 @@ export default function Usual() {
 
   const speak = useCallback(async (text: string) => {
     const audio = player.current;
-    if (!voiceOn || !audio || !health?.llm || health.llm === "rules" || health.mock === undefined) return;
+    if (!voiceOn || !audio || health.llm === "rules") return;
     try {
       const res = await fetch("/api/tts", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: text.slice(0, 190) }) });
       if (!res.ok) return;
@@ -167,23 +169,22 @@ export default function Usual() {
     setAutoPaying(false);
   };
 
-  useEffect(() => { api<Health>("health").then(setHealth).catch((e) => setLoadError(e.message)); }, []);
-  const ready = !!health && (health.mock || authed);
+  const ready = health.mock || authed;
 
   // Owner proves control of the wallet once; the server then accepts this browser.
   useEffect(() => {
-    if (!health || health.mock || !account || authed || signingIn.current) return;
+    if (health.mock || !account || !wallet || authed || signingIn.current) return;
     signingIn.current = true;
     (async () => {
-      const a = await api<{ message: string; at: number; owner: string; session: boolean }>(`auth?address=${account.address}`);
-      if (a.owner !== account.address) return setError(`This isn't the owner wallet. Connect ${a.owner.slice(0, 6)}…${a.owner.slice(-4)}.`);
+      const a = await api<{ message: string; at: number; owner: string; session: boolean }>(`auth?address=${account}`);
+      if (a.owner !== account) return setError(`This isn't the owner wallet. Connect ${a.owner.slice(0, 6)}…${a.owner.slice(-4)}.`);
       if (a.session) return setAuthed(true);
-      const { signature } = await signMessage({ message: new TextEncoder().encode(a.message) });
-      await api("auth", { address: account.address, at: a.at, signature });
+      const { signature } = await wallet.signMessage({ message: new TextEncoder().encode(a.message) });
+      await api("auth", { address: account, at: a.at, signature });
       setError("");
       setAuthed(true);
     })().catch((e) => setError(e.message)).finally(() => { signingIn.current = false; });
-  }, [health, account, authed, signMessage]);
+  }, [health, account, authed, wallet]);
 
   const refresh = useCallback(async (fresh = false) => {
     const s = await api<Snapshot>(`state?${fresh ? "fresh=1&" : ""}skip=${skip.join(",")}`);
@@ -205,13 +206,13 @@ export default function Usual() {
   /** Owner signature path: server builds and validates, wallet signs, server executes through Tatum. */
   const signAndSubmit = useCallback(async (kind: "pay" | "limit" | "cafe", bytes: string, meta: Record<string, unknown> = {}) => {
     let signed = { bytes, signature: "mock" };
-    if (!health?.mock) {
+    if (!health.mock) {
       setBusy("Waiting for your wallet…");
-      signed = await signTx({ transaction: bytes });
+      signed = await wallet!.signTx({ transaction: bytes });
     }
     setBusy("Sending…");
     return api<Outcome>("submit", { kind, bytes: signed.bytes, signature: signed.signature, meta });
-  }, [health, signTx]);
+  }, [health, wallet]);
 
   const execute = useCallback(async (p: Proposal) => {
     if (running.current) return;
@@ -234,7 +235,6 @@ export default function Usual() {
         if (r.needsOwner) r = await signAndSubmit("cafe", r.needsOwner, { item: p.item });
       }
       // A payment ends as one check mark, then the screen returns to just the balance.
-      await refresh();
       setReply(null);
       setHeard("");
       setDone({ say: r.say, digest: r.digest, amount: p.type === "limit" ? undefined : p.amount, to: p.type === "pay" ? p.name : p.type === "cafe" ? `Café · ${p.label}` : undefined });
@@ -244,6 +244,7 @@ export default function Usual() {
       setTimeout(() => setTearing(true), hold);
       setTimeout(() => { setDone(null); setTearing(false); }, hold + 300);
       speak(r.say);
+      refresh().catch(() => {});
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -253,8 +254,25 @@ export default function Usual() {
     }
   }, [refresh, signAndSubmit, speak]);
 
+  /** Puts memory back as it was before the last change. Money that moved stays moved. */
+  const revert = useCallback(async () => {
+    if (!undo) return;
+    const records = undo;
+    setUndo(null);
+    setReply(null);
+    setHeard("");
+    setDone(null);
+    setHint("Undone.");
+    await api("undo", { records });
+    setSkip([]);
+    const s = await api<Snapshot>("state");
+    setSnap(s);
+    setAsking(s.questions[0] ?? null);
+  }, [undo]);
+
   const send = useCallback(async (text: string) => {
     if (!text.trim()) return;
+    if (undo && /^(undo|go back|revert|take that back|never ?mind)\b/i.test(text.trim())) return revert();
     cancelAutoPay();
     setHeard(text);
     setHint("");
@@ -265,6 +283,8 @@ export default function Usual() {
     try {
       const r = await api<Reply>("talk", { text, asking, followUp, skip });
       setReply(r);
+      setThinking(false);
+      setUndo(r.undo?.length ? r.undo : null);
       speak(r.say);
       if (asking && (r.action.kind === "name" || r.action.kind === "skip")) setSkip((s) => [...s, asking.address]);
       if (r.asking !== undefined) setAsking(r.asking);
@@ -274,13 +294,13 @@ export default function Usual() {
         setAutoPaying(true);
         timer.current = setTimeout(() => { setAutoPaying(false); execute(r.proposal!); }, AUTO_PAY_MS);
       }
-      await refresh();
+      refresh().catch(() => {});
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setThinking(false);
     }
-  }, [asking, followUp, skip, execute, refresh, speak]);
+  }, [asking, followUp, skip, undo, revert, execute, refresh, speak]);
 
   // Opened from a café QR: treat the request as if it had been spoken, once the wallet has loaded.
   useEffect(() => {
@@ -301,6 +321,7 @@ export default function Usual() {
     if (box) { document.documentElement.style.setProperty("--ox", `${box.left + box.width / 2}px`); document.documentElement.style.setProperty("--oy", `${box.top + box.height / 2}px`); }
     pressedAt.current = Date.now();
     stopHeld.current = false;
+    setTyping(false);
     setHeard("");
     setReply(null);
     setDone(null);
@@ -327,10 +348,12 @@ export default function Usual() {
     const mime = ["audio/webm", "audio/mp4"].find((m) => MediaRecorder.isTypeSupported(m)) ?? "";
     const media = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
     recorder.current = media;
-    const hear = async () => {
+    let partialCall: AbortController | null = null;
+    const hear = async (signal?: AbortSignal) => {
       const form = new FormData();
+      form.set("language", navigator.language.slice(0, 2));
       form.set("audio", new File(chunks, mime.includes("mp4") ? "speech.mp4" : "speech.webm", { type: mime || "audio/webm" }));
-      const res = await fetch("/api/stt", { method: "POST", body: form });
+      const res = await fetch("/api/stt", { method: "POST", body: form, signal });
       if (!res.ok) throw new Error("transcription failed");
       return (await res.json() as { text: string }).text;
     };
@@ -338,7 +361,8 @@ export default function Usual() {
     media.ondataavailable = (e) => {
       if (e.data.size) chunks.push(e.data);
       if (partial || media.state !== "recording") return;
-      partial = hear().then((text) => {
+      partialCall = new AbortController();
+      partial = hear(partialCall.signal).then((text) => {
         if (media.state !== "recording" || !text) return;
         setHeard(text);
         orb.current?.animate([{ transform: "scale(1.12)" }, { transform: "scale(1.2)" }, { transform: "scale(1.12)" }], { duration: 260, easing: "cubic-bezier(0.22, 1, 0.36, 1)" });
@@ -348,11 +372,12 @@ export default function Usual() {
       stream.getTracks().forEach((t) => t.stop());
       recorder.current = null;
       setListening(false);
+      partialCall?.abort();
       if (Date.now() - pressedAt.current < 400) return setHint("Keep holding while you talk.");
       setThinking(true);
       try {
         const text = await hear();
-        if (text) send(text);
+        if (text) await send(text);
         else setHint("I didn't catch that. Try again.");
       } catch {
         setHint("I couldn't hear that. Try again, or type instead.");
@@ -371,7 +396,7 @@ export default function Usual() {
     player.current.pause();
     player.current.src = SILENCE;
     player.current.play().catch(() => {});
-    if (health && health.llm !== "rules" && typeof MediaRecorder !== "undefined" && navigator.mediaDevices) return startWhisper();
+    if (health.llm !== "rules" && typeof MediaRecorder !== "undefined" && navigator.mediaDevices) return startWhisper();
     const r = recognizer();
     if (!r) {
       setHint("Voice doesn't work in this browser. Type instead.");
@@ -460,14 +485,13 @@ export default function Usual() {
 
   if (settings) {
     const close = () => setSettings(false);
-    const explorer = (d: string) => (d.startsWith("MOCK") ? null : `https://suiscan.xyz/${health?.network ?? "testnet"}/tx/${d}`);
+    const explorer = (d: string) => (d.startsWith("MOCK") ? null : `https://suiscan.xyz/${health.network}/tx/${d}`);
     return (
-      <main className="app settings" onKeyDown={(e) => e.key === "Escape" && close()}>
+      <main className="app settings sheet" onKeyDown={(e) => e.key === "Escape" && close()}>
         <header className="settings-top">
           <h1>Settings</h1>
           <button className="ghost" autoFocus onClick={close}>Close settings</button>
         </header>
-        {health && !health.mock && <ConnectButton />}
 
         <h2>What I remember</h2>
         {snap?.memory.error && <p className="problem" role="alert">I can&apos;t reach your memory, so I don&apos;t know anyone right now.</p>}
@@ -508,7 +532,7 @@ export default function Usual() {
         <h2>Try the café</h2>
         <button className="row-button" onClick={() => { close(); send("buy a flat white at the café"); }}>Café: flat white</button>
         <button className="row-button" onClick={() => { close(); send("pay for a croissant at the café"); }}>Café: croissant</button>
-        {health?.mock && <p className="fine">Demo mode: play money, nothing leaves this device.</p>}
+        {health.mock && <p className="fine">Demo mode: play money, nothing leaves this device.</p>}
       </main>
     );
   }
@@ -521,7 +545,7 @@ export default function Usual() {
       <section className="stage" data-card={cardUp} aria-live="polite">
         {snap ? (
           <p className="balance" ref={balanceEl} data-testid="balance"><Rolling value={snap.balance} /> <span className="unit">{symbol}</span></p>
-        ) : !loadError && (health?.mock || ready) ? <p className="balance loading" aria-label="Loading your balance">0.00</p> : null}
+        ) : !loadError && ready ? <p className="balance loading" aria-label="Loading your balance">0.00</p> : null}
 
         {proposal && (
           <article className="card">
@@ -593,7 +617,7 @@ export default function Usual() {
           {listening && !heard && <p className="say">Listening…</p>}
           {thinking && <p className="say">Thinking…</p>}
           {reply && !proposal && !insight && (
-            <p className="say" key={reply.say} data-testid="say"><Words text={reply.say} stagger={35} /> {asking && reply.say.includes(asking.text) && <button className="link" onClick={() => send("skip")}>Skip</button>}</p>
+            <p className="say" key={reply.say} data-testid="say"><Words text={reply.say} stagger={35} /> {undo && <button className="link" onClick={revert}>Undo</button>} {asking && reply.say.includes(asking.text) && <button className="link" onClick={() => send("skip")}>Skip</button>}</p>
           )}
           {asking && !reply?.say.includes(asking.text) && !proposal && !insight && !listening && !thinking && (
             <p className="say" key={asking.text} data-testid="asking"><Words text={asking.text} stagger={35} /> <button className="link" onClick={() => send("skip")}>Skip</button></p>
@@ -603,7 +627,7 @@ export default function Usual() {
           {snap?.memory.error && !heard && <p className="problem" role="alert">I can&apos;t reach your memory right now.</p>}
           {loadError && <p className="problem" role="alert">I couldn&apos;t load your wallet. <button className="link" onClick={firstLoad}>Try again</button></p>}
           {ready && !snap && !loadError && <p className="say">Reading your memory…</p>}
-          {!ready && health && <p className="say">{account ? "Sign the message in your wallet." : "Connect your wallet to start."}</p>}
+          {!ready && <p className="say">{account ? "Sign the message in your wallet." : "Connect your wallet to start."}</p>}
           {idle && snap && !snap.memory.error && <p className="say">{firstName ? `Try “Send ${firstName} the usual”` : "Hold to talk"}</p>}
         </div>
         {ready ? (
@@ -618,7 +642,8 @@ export default function Usual() {
               <button className="ghost" onClick={() => setTyping(true)}>Type</button>
             )}
           </>
-        ) : health && !health.mock && <ConnectButton />}
+        ) : null}
+        {!health.mock && <Wallet onChange={setWallet} show={!ready} />}
       </footer>
     </main>
   );

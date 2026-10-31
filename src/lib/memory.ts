@@ -68,6 +68,11 @@ export async function load(fresh = false): Promise<Loaded> {
     const records = [...mem.records, ...mem.pending];
     return { state: reduce(records), records, source: "cache", pending: unsaved() };
   }
+  return (rebuilding ??= rebuild().finally(() => { rebuilding = null; }));
+}
+
+let rebuilding: Promise<Loaded> | null = null;
+async function rebuild(): Promise<Loaded> {
   try {
     const seen = new Map<string, Stamped>();
     for (const res of await Promise.all(QUERIES.map((query) => memwal().recall({ query, limit: 100 })))) {
@@ -104,7 +109,8 @@ export async function remember(recs: Rec[]): Promise<{ stored: Stamped[]; queued
   }
   mem.pending.push(...stored);
   saveQueue();
-  await flush();
+  // Persisted above, so the reply never waits on Walrus. Failures retry from the queue.
+  void flush();
   return { stored, queued: mem.pending.length };
 }
 

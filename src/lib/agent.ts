@@ -29,6 +29,7 @@ export type Reply = {
   understood?: string;
   proposal?: Proposal;
   insight?: Insight;
+  undo?: Rec[]; // records that put memory back as it was; payments have no undo
   asking?: Question | null;
   followUp?: Action | null;
   remembered: number;
@@ -102,7 +103,7 @@ async function run(a: Action, s: State, ctx: TalkContext): Promise<Out> {
       const n = await write([{ ...c, removed: true }, ...(usual ? [{ ...usual, removed: true }] : []), ...(sub ? [{ ...sub, removed: true }] : [])]);
       const contacts = Object.fromEntries(Object.entries(s.contacts).filter(([, x]) => x.address !== c.address));
       const next = questionsFrom(await wallet.history(), { ...s, contacts }, ctx.skip ?? [])[0] ?? null;
-      return { say: `Forgotten. ${c.name} is gone from your memory.`, asking: next, remembered: n };
+      return { say: `Forgotten. ${c.name} is gone from your memory.`, asking: next, undo: [c, ...(usual ? [usual] : []), ...(sub ? [sub] : [])], remembered: n };
     }
     case "set_usual": {
       const r = resolveContact(s, a.to);
@@ -138,7 +139,7 @@ async function run(a: Action, s: State, ctx: TalkContext): Promise<Out> {
       const sub = Object.values(s.subscriptions).find((x) => x.name.toLowerCase().includes(a.name.toLowerCase()) || a.name.toLowerCase().includes(x.name.toLowerCase()));
       if (!sub) return { say: `I don't see a subscription called ${a.name}.`, remembered: 0 };
       const n = await write([{ ...sub, cancelled: true }, { type: "MENTION", name: sub.name, at: Date.now() }]);
-      return { say: `Done. ${sub.name} is marked cancelled, and I'll stop any payment to it.`, remembered: n };
+      return { say: `Done. ${sub.name} is marked cancelled, and I'll stop any payment to it.`, undo: [sub], remembered: n };
     }
     case "balance": {
       const bal = await wallet.balance();
@@ -173,15 +174,16 @@ async function name(a: Extract<Action, { kind: "name" }>, s: State, ctx: TalkCon
   }
   recs.push({ type: "MENTION", name: a.name, at: Date.now() });
   const n = await write(recs);
+  const undo = recs.filter((r) => r.type === "CONTACT" || r.type === "USUAL" || r.type === "SUBSCRIPTION").map((r) => ({ ...r, removed: true }) as Rec);
   const skip = [...(ctx.skip ?? []), q.address];
   const nowKnown: State = { ...s, contacts: { ...s.contacts, [a.name.toLowerCase()]: recs[0] as never } };
   const next = questionsFrom(hist, nowKnown, skip)[0] ?? null;
-  if (next) return { say: `${say} ${next.text}`, asking: next, remembered: n };
+  if (next) return { say: `${say} ${next.text}`, asking: next, undo, remembered: n };
   // Everyone is named: propose the first limit from what the history shows.
   const after = reduce([...stateRecords(s), ...recs.map((r) => ({ ...r, v: Date.now() }))]);
   const sug = suggestLimit(after, hist);
-  if (!sug) return { say, asking: null, remembered: n };
-  return { say: `${say} From what you spend, I'd cap ${sug.category} at ${sug.amount} ${env.symbol} a ${sug.periodDays === 30 ? "month" : sug.periodDays === 7 ? "week" : "day"}. OK?`, asking: null, followUp: { kind: "set_limit", category: sug.category, amount: sug.amount, periodDays: sug.periodDays }, remembered: n };
+  if (!sug) return { say, asking: null, undo, remembered: n };
+  return { say: `${say} From what you spend, I'd cap ${sug.category} at ${sug.amount} ${env.symbol} a ${sug.periodDays === 30 ? "month" : sug.periodDays === 7 ? "week" : "day"}. OK?`, asking: null, undo, followUp: { kind: "set_limit", category: sug.category, amount: sug.amount, periodDays: sug.periodDays }, remembered: n };
 }
 
 /** State back to records, to fold new facts in before they are indexed. */

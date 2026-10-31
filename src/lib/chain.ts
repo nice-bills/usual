@@ -53,14 +53,12 @@ export function sui(): SuiGrpcClient {
 
 export const agent = () => Ed25519Keypair.fromSecretKey(env.agentKey);
 
-// Serialize chain work and cache reads briefly (the transport does the rate limiting).
-let chainQueue = Promise.resolve();
+// Cache reads briefly. The transport already does the rate limiting.
 const memo = new Map<string, { at: number; value: Promise<unknown> }>();
 export function paced<T>(key: string | null, fn: () => Promise<T>, ttlMs = 5_000): Promise<T> {
   const hit = key ? memo.get(key) : undefined;
   if (hit && Date.now() - hit.at < ttlMs) return hit.value as Promise<T>;
-  const run = chainQueue.then(fn);
-  chainQueue = run.then(() => undefined, () => undefined);
+  const run = fn();
   if (key) {
     memo.set(key, { at: Date.now(), value: run });
     run.catch(() => memo.delete(key));

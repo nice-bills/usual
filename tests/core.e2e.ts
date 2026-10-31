@@ -135,6 +135,16 @@ describe('safety and learning on a phone', { serial: true }, () => {
     await expect(screen.getByRole('button', 'Approve with wallet')).toBeVisible();
   });
 
+  test('a change to memory can be undone', async ({ screen }) => {
+    await say(screen, 'forget Streamly');
+    await expect(screen.getByTestId('say')).toContainText('Forgotten');
+    await screen.getByRole('button', 'Undo').tap();
+    await expect(screen.getByText('Undone.')).toBeVisible();
+    await screen.getByRole('button', 'Settings').tap();
+    await expect(screen.getByText('Streamly')).toBeVisible();
+    await screen.getByRole('button', 'Close settings').tap();
+  });
+
   test('settings show remembered people, limits and chain activity', async ({ screen }) => {
     await screen.getByRole('button', 'Settings').tap();
     await expect(screen.getByText('usually 50 USDC')).toBeVisible();
