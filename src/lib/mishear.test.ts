@@ -53,7 +53,7 @@ describe("names that came through voice messily", () => {
     expect(validateIntent(noisy, { to: "Mom" }, now, hist)).toMatchObject({ ok: true, plan: { contact: { address: MUM } } });
   });
   it("a word shared by two people still asks", () => {
-    expect(validateIntent(s, { to: "Mensah" }, now, hist)).toMatchObject({ ok: true });
+    expect(validateIntent(s, { to: "Mensah", amount: "5" }, now, hist)).toMatchObject({ ok: true });
     expect(validateIntent(s, { to: "Kofi" }, now, hist)).toMatchObject({ ok: false });
   });
 });
