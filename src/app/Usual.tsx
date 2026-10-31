@@ -36,6 +36,32 @@ const REQUESTS: Record<string, string> = {
 
 const per = (days: number) => (days === 1 ? "day" : days === 7 ? "week" : days === 30 ? "month" : `${days} days`);
 
+/** The signature: how many times Usual has seen this, as a shopkeeper's tally. */
+function Tally({ count }: { count: number }) {
+  const shown = Math.min(count, 10);
+  const groups = Array.from({ length: Math.ceil(shown / 5) }, (_, g) => Math.min(5, shown - g * 5));
+  return (
+    <svg className="tally" width={groups.length * 24 - 4} height="16" viewBox={`0 0 ${groups.length * 24 - 4} 16`} aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+      {groups.map((n, g) => (
+        <g key={g} transform={`translate(${g * 24} 0)`}>
+          {Array.from({ length: Math.min(n, 4) }, (_, i) => <path key={i} d={`M${2 + i * 4} 2v12`} />)}
+          {n === 5 && <path d="M0 11 16 5" />}
+        </g>
+      ))}
+    </svg>
+  );
+}
+
+const Mic = () => (
+  <svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+    <rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5 11a7 7 0 0 0 14 0M12 18v3" />
+  </svg>
+);
+
+const seenTimes = (reason: string) => Number(reason.match(/\d+/)?.[0] ?? 0);
+
+type Done = { say: string; amount?: string; to?: string; digest?: string };
+
 function readVoicePref() {
   try {
     return localStorage.getItem("usual.voice") !== "off";
@@ -67,7 +93,7 @@ export default function Usual() {
   const [voiceOn, setVoiceOn] = useState(readVoicePref);
   const [autoPaying, setAutoPaying] = useState(false);
   const [settings, setSettings] = useState(false);
-  const [done, setDone] = useState<string | null>(null);
+  const [done, setDone] = useState<Done | null>(null);
   const rec = useRef<Rec | null>(null);
   const finalText = useRef("");
   const pressedAt = useRef(0);
@@ -159,7 +185,7 @@ export default function Usual() {
       await refresh();
       setReply(null);
       setHeard("");
-      setDone(r.say);
+      setDone({ say: r.say, digest: r.digest, amount: p.type === "limit" ? undefined : p.amount, to: p.type === "pay" ? p.name : p.type === "cafe" ? `Café · ${p.label}` : undefined });
       setFollowUp(r.followUp ?? null);
       setTimeout(() => setDone(null), r.followUp ? 8000 : 4000);
       speak(r.say);
@@ -238,7 +264,7 @@ export default function Usual() {
       finalText.current = text;
       setHeard(text);
       // The orb answers each word. No second mic stream: phones can't share it with speech recognition.
-      orb.current?.animate([{ transform: "scale(1.14)" }, { transform: "scale(1.26)" }, { transform: "scale(1.14)" }], { duration: 260, easing: "ease-out" });
+      orb.current?.animate([{ transform: "scale(1.12)" }, { transform: "scale(1.2)" }, { transform: "scale(1.12)" }], { duration: 260, easing: "cubic-bezier(0.22, 1, 0.36, 1)" });
     };
     r.onerror = (e) => {
       if (e.error === "aborted" || e.error === "no-speech") return;
@@ -293,7 +319,7 @@ export default function Usual() {
           return (
             <p key={c.address} className="row">
               <span>{c.name}</span>
-              <span>{sub ? `${sub.amount} ${symbol} a month${sub.cancelled ? ", cancelled" : ""}` : usual ? `usually ${usual.amount} ${symbol}` : ""}</span>
+              <span>{usual?.count ? <Tally count={usual.count} /> : null}{sub ? `${sub.amount} ${symbol} a month${sub.cancelled ? ", cancelled" : ""}` : usual ? `usually ${usual.amount} ${symbol}` : ""}</span>
             </p>
           );
         })}
@@ -347,7 +373,7 @@ export default function Usual() {
               <p className="amount">{proposal.amount} <span className="unit">{symbol}{proposal.type === "limit" ? ` a ${per(proposal.periodDays)}` : ""}</span></p>
               <dl>
                 {proposal.type === "pay" && <><dt>To</dt><dd>{proposal.name} ({proposal.address.slice(0, 4)}…{proposal.address.slice(-2)})</dd></>}
-                {proposal.type === "pay" && proposal.reason && <><dt>Why</dt><dd>{proposal.reason}</dd></>}
+                {proposal.type === "pay" && proposal.reason && <><dt>Why</dt><dd>{seenTimes(proposal.reason) > 0 && <Tally count={seenTimes(proposal.reason)} />}{proposal.reason}</dd></>}
                 {proposal.type === "cafe" && <><dt>To</dt><dd>Café · {proposal.label}</dd></>}
                 {proposal.type === "limit" && <><dt>For</dt><dd className="cap">{proposal.category}</dd></>}
                 {proposal.type !== "limit" && <><dt>Balance after</dt><dd>{proposal.balanceAfter}</dd></>}
@@ -379,19 +405,28 @@ export default function Usual() {
           </article>
         )}
 
-        {done && (
+        {done && (done.amount ? (
+          <div className="slip"><article className="receipt">
+            <p className="said" data-testid="status">{/\. /.test(done.say) ? done.say : done.say.replace(/\.$/, "")}</p>
+            <p className="total"><span>Paid</span><span>{done.amount} {symbol}</span></p>
+            <dl>
+              <dt>To</dt><dd>{done.to}</dd>
+              {done.digest && <><dt>Ref</dt><dd>{done.digest.slice(0, 8)}</dd></>}
+            </dl>
+          </article></div>
+        ) : (
           <article className="card done">
             <span className="check" aria-hidden="true" />
-            <p data-testid="status">{done}</p>
+            <p data-testid="status">{done.say}</p>
           </article>
-        )}
+        ))}
       </section>
 
       <footer className="dock">
         <div className="words" aria-live="polite">
           {heard && <p className="heard" data-testid="heard">“{heard}”</p>}
           {listening && !heard && <p className="say">Listening…</p>}
-          {thinking && <p className="say" aria-label="Thinking"><span className="dots" /></p>}
+          {thinking && <p className="say">Thinking…</p>}
           {reply && !proposal && !insight && (
             <p className="say" data-testid="say">{reply.say} {asking && reply.say.includes(asking.text) && <button className="link" onClick={() => send("skip")}>Skip</button>}</p>
           )}
@@ -408,7 +443,7 @@ export default function Usual() {
         </div>
         {ready ? (
           <>
-            <button ref={orb} className="orb" data-on={listening} aria-pressed={listening} aria-label={listening ? "Listening, release to send" : "Hold to talk"} onPointerDown={startTalk} onPointerUp={stopTalk} onPointerCancel={stopTalk} onPointerLeave={() => listening && stopTalk()} onContextMenu={(e) => e.preventDefault()} {...hold} />
+            <button ref={orb} className="orb" data-on={listening} aria-pressed={listening} aria-label={listening ? "Listening, release to send" : "Hold to talk"} onPointerDown={startTalk} onPointerUp={stopTalk} onPointerCancel={stopTalk} onPointerLeave={() => listening && stopTalk()} onContextMenu={(e) => e.preventDefault()} {...hold}><Mic /></button>
             {typing ? (
               <form className="typed" onSubmit={(e) => { e.preventDefault(); send(typed); setTyped(""); }}>
                 <input aria-label="Type instead" autoFocus placeholder="Send Mum her usual" value={typed} onChange={(e) => setTyped(e.target.value)} onKeyDown={(e) => e.key === "Escape" && setTyping(false)} onBlur={(e) => { if (!typed && !e.relatedTarget) setTyping(false); }} />

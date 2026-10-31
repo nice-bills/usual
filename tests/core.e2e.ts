@@ -36,7 +36,7 @@ describe('Usual core flows (mock mode)', { serial: true }, () => {
     await expect(screen.getByTestId('understood')).toContainText('Mum (0x33…33)');
     await expect(screen.getByTestId('understood')).toContainText('like the last 3 times');
     await expect(screen.getByTestId('understood')).toContainText('412.50');
-    await expect(screen.getByTestId('status')).toContainText('Sent 50 USDC to Mum.', { timeout: 10_000 });
+    await expect(screen.getByTestId('status')).toContainText('Sent 50 USDC to Mum', { timeout: 10_000 });
     await expect(screen.getByTestId('balance')).toHaveText('412.50 USDC');
   });
 
@@ -82,7 +82,7 @@ describe('Usual core flows (mock mode)', { serial: true }, () => {
   test('a double tap on approve pays once', async ({ screen }) => {
     await say(screen, 'Send Mum 100');
     await screen.getByRole('button', 'Approve with wallet').doubleTap();
-    await expect(screen.getByTestId('status')).toContainText('Sent 100 USDC to Mum.');
+    await expect(screen.getByTestId('status')).toContainText('Sent 100 USDC to Mum');
     await expect(screen.getByTestId('balance')).toHaveText('308.00 USDC');
   });
 
