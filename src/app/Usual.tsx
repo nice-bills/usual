@@ -2,7 +2,7 @@
 // One balance, one orb, one card at a time. Holds no user knowledge of its own:
 // everything shown comes from /api/state (Walrus Memory).
 import { ConnectButton, useCurrentAccount, useSignPersonalMessage, useSignTransaction } from "@mysten/dapp-kit";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Proposal, Question, Reply } from "@/lib/agent";
 import type { Action } from "@/lib/parse";
 import type { State } from "@/lib/records";
@@ -36,6 +36,42 @@ const REQUESTS: Record<string, string> = {
 
 const per = (days: number) => (days === 1 ? "day" : days === 7 ? "week" : days === 30 ? "month" : `${days} days`);
 
+const calm = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+/** Money rolls to its new value, so a payment reads as the balance changing, not swapping. */
+function Rolling({ value, ms = 800 }: { value: string; ms?: number }) {
+  const el = useRef<HTMLSpanElement>(null);
+  const shown = useRef(0);
+  useLayoutEffect(() => {
+    const node = el.current!;
+    const to = Number(value);
+    const from = shown.current;
+    shown.current = to;
+    if (from === to || calm()) {
+      node.textContent = value;
+      return;
+    }
+    const places = value.split(".")[1]?.length ?? 0;
+    const start = performance.now();
+    let frame = 0;
+    const tick = (t: number) => {
+      const p = Math.min(1, (t - start) / ms);
+      node.textContent = p === 1 ? value : (from + (to - from) * (1 - (1 - p) ** 4)).toFixed(places);
+      if (p < 1) frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+    return () => { cancelAnimationFrame(frame); node.textContent = value; };
+  }, [value, ms]);
+  return <span ref={el} />;
+}
+
+/** Words arrive one at a time. Stable keys mean only new words animate during live speech. */
+function Words({ text, stagger = 0 }: { text: string; stagger?: number }) {
+  return text.split(" ").map((w, i) => (
+    <span key={i}>{i > 0 && " "}<span className="w" style={{ animationDelay: `${Math.min(i * stagger, 500)}ms` }}>{w}</span></span>
+  ));
+}
+
 /** The signature: how many times Usual has seen this, as a shopkeeper's tally. */
 function Tally({ count }: { count: number }) {
   const shown = Math.min(count, 10);
@@ -44,13 +80,15 @@ function Tally({ count }: { count: number }) {
     <svg className="tally" width={groups.length * 24 - 4} height="16" viewBox={`0 0 ${groups.length * 24 - 4} 16`} aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
       {groups.map((n, g) => (
         <g key={g} transform={`translate(${g * 24} 0)`}>
-          {Array.from({ length: Math.min(n, 4) }, (_, i) => <path key={i} d={`M${2 + i * 4} 2v12`} />)}
-          {n === 5 && <path d="M0 11 16 5" />}
+          {Array.from({ length: Math.min(n, 4) }, (_, i) => <path key={i} pathLength={1} style={{ animationDelay: `${240 + (g * 5 + i) * 70}ms` }} d={`M${2 + i * 4} 2v12`} />)}
+          {n === 5 && <path pathLength={1} style={{ animationDelay: `${240 + (g * 5 + 4) * 70}ms` }} d="M0 11 16 5" />}
         </g>
       ))}
     </svg>
   );
 }
+
+const Wave = () => <span className="wave" aria-hidden="true"><i /><i /><i /><i /><i /></span>;
 
 const Mic = () => (
   <svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -94,12 +132,15 @@ export default function Usual() {
   const [autoPaying, setAutoPaying] = useState(false);
   const [settings, setSettings] = useState(false);
   const [done, setDone] = useState<Done | null>(null);
+  const [tearing, setTearing] = useState(false);
   const rec = useRef<Rec | null>(null);
   const finalText = useRef("");
   const pressedAt = useRef(0);
   const voiceFailed = useRef(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const orb = useRef<HTMLButtonElement>(null);
+  const balanceEl = useRef<HTMLParagraphElement>(null);
+  const balanceBox = useRef<DOMRect | null>(null);
   // Guards against a double tap paying twice; state alone updates too late.
   const running = useRef(false);
   const signingIn = useRef(false);
@@ -187,7 +228,10 @@ export default function Usual() {
       setHeard("");
       setDone({ say: r.say, digest: r.digest, amount: p.type === "limit" ? undefined : p.amount, to: p.type === "pay" ? p.name : p.type === "cafe" ? `Café · ${p.label}` : undefined });
       setFollowUp(r.followUp ?? null);
-      setTimeout(() => setDone(null), r.followUp ? 8000 : 4000);
+      navigator.vibrate?.(20);
+      const hold = r.followUp ? 7700 : 3700;
+      setTimeout(() => setTearing(true), hold);
+      setTimeout(() => { setDone(null); setTearing(false); }, hold + 300);
       speak(r.say);
     } catch (e) {
       setError((e as Error).message);
@@ -299,6 +343,25 @@ export default function Usual() {
   const firstName = state ? Object.values(state.contacts).find((c) => state.usuals[c.name.toLowerCase()])?.name : undefined;
   const idle = !heard && !reply && !asking && !hint && !error && !listening && !thinking && !done;
 
+  const loaded = !!snap;
+  const cardUp = !!proposal || !!insight || !!done;
+  const orbState = listening ? "listening" : thinking || busy ? "working" : error ? "error" : done ? "done" : idle ? "invite" : "idle";
+
+  // The balance travels between centre and top instead of jumping when a card arrives.
+  useLayoutEffect(() => {
+    const node = balanceEl.current;
+    if (!node) return;
+    const now = node.getBoundingClientRect();
+    const was = balanceBox.current;
+    balanceBox.current = now;
+    if (!was || calm() || (was.top === now.top && was.height === now.height)) return;
+    const zoom = was.height / now.height;
+    node.animate(
+      [{ transform: `translate(${was.left + was.width / 2 - now.left - now.width / 2}px, ${was.top + was.height / 2 - now.top - now.height / 2}px) scale(${zoom})` }, { transform: "none" }],
+      { duration: 320, easing: "cubic-bezier(0.32, 0.72, 0, 1)" },
+    );
+  }, [cardUp, loaded]);
+
   if (settings) {
     const close = () => setSettings(false);
     const explorer = (d: string) => (d.startsWith("MOCK") ? null : `https://suiscan.xyz/${health?.network ?? "testnet"}/tx/${d}`);
@@ -358,9 +421,9 @@ export default function Usual() {
     <main className="app">
       <button className="menu" aria-label="Settings" onClick={() => setSettings(true)}><span /><span /></button>
 
-      <section className="stage" data-card={!!proposal || !!insight || !!done} aria-live="polite">
+      <section className="stage" data-card={cardUp} aria-live="polite">
         {snap ? (
-          <p className="balance" data-testid="balance">{snap.balance} <span className="unit">{symbol}</span></p>
+          <p className="balance" ref={balanceEl} data-testid="balance"><Rolling value={snap.balance} /> <span className="unit">{symbol}</span></p>
         ) : !loadError && (health?.mock || ready) ? <p className="balance loading" aria-label="Loading your balance">0.00</p> : null}
 
         {proposal && (
@@ -370,7 +433,7 @@ export default function Usual() {
               {"overLimit" in proposal && proposal.overLimit && <span className="pill">{proposal.overLimit.replace(/^o/, "O").replace(/ \(.*$/, "")}</span>}
             </header>
             <div data-testid="understood">
-              <p className="amount">{proposal.amount} <span className="unit">{symbol}{proposal.type === "limit" ? ` a ${per(proposal.periodDays)}` : ""}</span></p>
+              <p className="amount"><Rolling value={proposal.amount} ms={420} /> <span className="unit">{symbol}{proposal.type === "limit" ? ` a ${per(proposal.periodDays)}` : ""}</span></p>
               <dl>
                 {proposal.type === "pay" && <><dt>To</dt><dd>{proposal.name} ({proposal.address.slice(0, 4)}…{proposal.address.slice(-2)})</dd></>}
                 {proposal.type === "pay" && proposal.reason && <><dt>Why</dt><dd>{seenTimes(proposal.reason) > 0 && <Tally count={seenTimes(proposal.reason)} />}{proposal.reason}</dd></>}
@@ -406,7 +469,7 @@ export default function Usual() {
         )}
 
         {done && (done.amount ? (
-          <div className="slip"><article className="receipt">
+          <div className="slip" data-tearing={tearing}><article className="receipt">
             <p className="said" data-testid="status">{/\. /.test(done.say) ? done.say : done.say.replace(/\.$/, "")}</p>
             <p className="total"><span>Paid</span><span>{done.amount} {symbol}</span></p>
             <dl>
@@ -415,7 +478,7 @@ export default function Usual() {
             </dl>
           </article></div>
         ) : (
-          <article className="card done">
+          <article className="card done" data-tearing={tearing}>
             <span className="check" aria-hidden="true" />
             <p data-testid="status">{done.say}</p>
           </article>
@@ -424,14 +487,14 @@ export default function Usual() {
 
       <footer className="dock">
         <div className="words" aria-live="polite">
-          {heard && <p className="heard" data-testid="heard">“{heard}”</p>}
+          {heard && <p className="heard" data-testid="heard">“<Words text={heard} />”</p>}
           {listening && !heard && <p className="say">Listening…</p>}
           {thinking && <p className="say">Thinking…</p>}
           {reply && !proposal && !insight && (
-            <p className="say" data-testid="say">{reply.say} {asking && reply.say.includes(asking.text) && <button className="link" onClick={() => send("skip")}>Skip</button>}</p>
+            <p className="say" key={reply.say} data-testid="say"><Words text={reply.say} stagger={35} /> {asking && reply.say.includes(asking.text) && <button className="link" onClick={() => send("skip")}>Skip</button>}</p>
           )}
           {asking && !reply?.say.includes(asking.text) && !proposal && !insight && !listening && !thinking && (
-            <p className="say" data-testid="asking">{asking.text} <button className="link" onClick={() => send("skip")}>Skip</button></p>
+            <p className="say" key={asking.text} data-testid="asking"><Words text={asking.text} stagger={35} /> <button className="link" onClick={() => send("skip")}>Skip</button></p>
           )}
           {hint && <p className="say">{hint}</p>}
           {error && !proposal && <p className="problem" role="alert">{error}</p>}
@@ -443,7 +506,7 @@ export default function Usual() {
         </div>
         {ready ? (
           <>
-            <button ref={orb} className="orb" data-on={listening} aria-pressed={listening} aria-label={listening ? "Listening, release to send" : "Hold to talk"} onPointerDown={startTalk} onPointerUp={stopTalk} onPointerCancel={stopTalk} onPointerLeave={() => listening && stopTalk()} onContextMenu={(e) => e.preventDefault()} {...hold}><Mic /></button>
+            <button ref={orb} className="orb" data-state={orbState} data-on={listening} aria-pressed={listening} aria-label={listening ? "Listening, release to send" : "Hold to talk"} onPointerDown={startTalk} onPointerUp={stopTalk} onPointerCancel={stopTalk} onPointerLeave={() => listening && stopTalk()} onContextMenu={(e) => e.preventDefault()} {...hold}>{listening ? <Wave /> : <Mic />}</button>
             {typing ? (
               <form className="typed" onSubmit={(e) => { e.preventDefault(); send(typed); setTyped(""); }}>
                 <input aria-label="Type instead" autoFocus placeholder="Send Mum her usual" value={typed} onChange={(e) => setTyped(e.target.value)} onKeyDown={(e) => e.key === "Escape" && setTyping(false)} onBlur={(e) => { if (!typed && !e.relatedTarget) setTyping(false); }} />
