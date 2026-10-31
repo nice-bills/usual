@@ -17,11 +17,16 @@ describe('Usual core flows (mock mode)', { serial: true }, () => {
   test('naming payees turns them into memories', async ({ screen }) => {
     await say(screen, "That's Mum");
     await expect(screen.getByTestId('say')).toContainText('Got it, Mum. Usually 50 USDC.');
+    await expect(screen.getByText(/Who's that\?/)).toHaveCount(1);
     await say(screen, "that's my gym");
     await expect(screen.getByTestId('say')).toContainText('Gym: 35 USDC a month, up from 30.');
     await say(screen, "It's Streamly, a streaming subscription");
     await expect(screen.getByTestId('say')).toContainText('Streamly: 12 USDC a month.');
-    await expect(screen.getByTestId('say')).toContainText('Cap it at');
+    await expect(screen.getByTestId('say')).toContainText("I'd cap subscriptions at");
+    await say(screen, 'yes');
+    await expect(screen.getByTestId('say')).toContainText('USDC a month on subscriptions');
+    await screen.getByRole('button', 'Approve with wallet').tap();
+    await expect(screen.getByTestId('status')).toContainText('a month');
   });
 
   test('send Mum her usual: understood line, then the agent pays inside the family allowance', async ({ screen }) => {

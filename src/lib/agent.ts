@@ -115,7 +115,7 @@ async function run(a: Action, s: State, ctx: TalkContext): Promise<Out> {
     case "set_limit": {
       const amount = parseAmount(a.amount);
       if (amount == null || !a.periodDays) return { say: "What should the limit be, and per day, week or month?", remembered: 0 };
-      const per = a.periodDays === 1 ? "day" : a.periodDays === 7 ? "week" : `${a.periodDays} days`;
+      const per = a.periodDays === 1 ? "day" : a.periodDays === 7 ? "week" : a.periodDays === 30 ? "month" : `${a.periodDays} days`;
       return {
         say: `Sign once and the chain will hold me to ${formatAmount(amount)} ${env.symbol} a ${per} on ${a.category}.`,
         understood: `${a.category} limit · ${formatAmount(amount)} ${env.symbol} per ${per} · enforced by a Sui allowance`,
@@ -181,7 +181,7 @@ async function name(a: Extract<Action, { kind: "name" }>, s: State, ctx: TalkCon
   const after = reduce([...stateRecords(s), ...recs.map((r) => ({ ...r, v: Date.now() }))]);
   const sug = suggestLimit(after, hist);
   if (!sug) return { say, asking: null, remembered: n };
-  return { say: `${say} You spend about that much on ${sug.category}. Cap it at ${sug.amount} ${env.symbol} a ${sug.periodDays === 30 ? "month" : sug.periodDays === 7 ? "week" : "day"}?`, asking: null, followUp: { kind: "set_limit", category: sug.category, amount: sug.amount, periodDays: sug.periodDays }, remembered: n };
+  return { say: `${say} From what you spend, I'd cap ${sug.category} at ${sug.amount} ${env.symbol} a ${sug.periodDays === 30 ? "month" : sug.periodDays === 7 ? "week" : "day"}. OK?`, asking: null, followUp: { kind: "set_limit", category: sug.category, amount: sug.amount, periodDays: sug.periodDays }, remembered: n };
 }
 
 /** State back to records, to fold new facts in before they are indexed. */
@@ -334,7 +334,7 @@ export async function afterSigned(kind: "pay" | "limit" | "cafe", bytes: string,
     const amount = parseAmount(meta.amount ?? "");
     if (!meta.category || amount == null || !meta.periodDays) return { ok: false, digest: r.digest, say: "Missing limit details." };
     await remember([{ type: "LIMIT", category: meta.category, amount: formatAmount(amount), periodDays: meta.periodDays, allowanceId, capId: r.caps[0] }]);
-    return { ok: true, digest: r.digest, allowanceId, say: `Limit set. The agent key can now spend at most ${formatAmount(amount)} on ${meta.category} per ${meta.periodDays === 1 ? "day" : meta.periodDays === 7 ? "week" : `${meta.periodDays} days`}.` };
+    return { ok: true, digest: r.digest, allowanceId, say: `Limit set. The agent key can now spend at most ${formatAmount(amount)} on ${meta.category} a ${meta.periodDays === 1 ? "day" : meta.periodDays === 7 ? "week" : meta.periodDays === 30 ? "month" : `${meta.periodDays} days`}.` };
   }
   return payCafe(meta.item ?? "flat-white", allowanceId, s);
 }

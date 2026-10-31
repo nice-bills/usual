@@ -392,8 +392,10 @@ export default function Usual() {
           {heard && <p className="heard" data-testid="heard">“{heard}”</p>}
           {listening && !heard && <p className="say">Listening…</p>}
           {thinking && <p className="say" aria-label="Thinking"><span className="dots" /></p>}
-          {reply && !proposal && !insight && <p className="say" data-testid="say">{reply.say}</p>}
-          {asking && !proposal && !insight && !listening && !thinking && (
+          {reply && !proposal && !insight && (
+            <p className="say" data-testid="say">{reply.say} {asking && reply.say.includes(asking.text) && <button className="link" onClick={() => send("skip")}>Skip</button>}</p>
+          )}
+          {asking && !reply?.say.includes(asking.text) && !proposal && !insight && !listening && !thinking && (
             <p className="say" data-testid="asking">{asking.text} <button className="link" onClick={() => send("skip")}>Skip</button></p>
           )}
           {hint && <p className="say">{hint}</p>}

@@ -99,9 +99,19 @@ if (mode === "demo") {
     await hold(answer[1]);
     await pause(3200);
   }
+  // Learned limit: everyone is named, so Usual proposes a cap from the spending it has seen.
+  console.log("proposal:", await text("say"));
+  await pause(2500);
+  await hold("yes");
+  await page.getByRole("button", { name: "Approve with wallet" }).waitFor({ timeout: 60_000 });
+  await pause(3000);
+  await page.getByRole("button", { name: "Approve with wallet" }).click();
+  await page.getByTestId("status").waitFor({ timeout: 90_000 });
+  console.log("limit:", await text("status"));
+  await pause(5000);
   await hold("Send Mum her usual");
   await page.getByTestId("understood").waitFor({ timeout: 60_000 });
-  console.log("understood:", await text("understood"));
+  console.log("understood:", (await text("understood"))?.replace(/\s+/g, " "));
   await page.getByTestId("status").waitFor({ timeout: 60_000 });
   console.log("done:", await text("status"));
   await pause(5000);
@@ -120,6 +130,10 @@ if (mode === "demo") {
   console.log("summary:", await text("say"));
   await pause(6000);
   await page.getByRole("button", { name: "Settings" }).click();
+  await pause(4000);
+  await page.goto(`${base}/proof`);
+  await page.getByTestId("count").waitFor({ timeout: 60_000 });
+  console.log("proof memories:", await text("count"));
   await pause(4000);
 } else {
   await hold("Send Mum her usual");
