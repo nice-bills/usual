@@ -42,7 +42,11 @@ const TOOLS: { name: string; description: string; inputSchema: unknown; annotati
     description: "Check a payment without sending it. Leave amount out for the usual. Read back the result and get the user's yes before confirm_payment. If it asks a question, ask the user.",
     inputSchema: object({ to: str("Person's name"), amount: str("Amount, or omit for the usual") }, ["to"]),
     annotations: { readOnlyHint: true },
-    call: async ({ to, amount }) => reply(await act({ kind: "pay", to: to!, amount })),
+    call: async ({ to, amount }) => {
+      const r = await act({ kind: "pay", to: to!, amount });
+      // The app's "Sending…" is true there. Here nothing has moved yet.
+      return r.proposal ? { ...reply(r), say: `Nothing sent yet. ${r.understood}` } : reply(r);
+    },
   },
   {
     name: "confirm_payment",
