@@ -122,6 +122,13 @@ if (mode === "demo") {
   await page.getByRole("button", { name: "Settings" }).click();
   await pause(4000);
 } else {
+  await hold("Send Mum her usual");
+  await page.getByTestId("understood").waitFor({ timeout: 60_000 });
+  console.log("usual:", (await text("understood"))?.replace(/\s+/g, " "));
+  await page.getByRole("button", { name: "Cancel payment" }).click();
+  await hold("send mun 1");
+  await page.getByText("Did you mean Mum?").waitFor({ timeout: 60_000 });
+  console.log("mishear: asked");
   await hold("Send Mum 0.05");
   await page.getByTestId("understood").waitFor({ timeout: 60_000 });
   console.log("understood:", (await text("understood"))?.replace(/\s+/g, " "));

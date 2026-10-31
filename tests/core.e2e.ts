@@ -100,3 +100,40 @@ describe('Usual core flows (mock mode)', { serial: true }, () => {
     await expect(screen.getByTestId('say')).toHaveText("Who's Mum?");
   });
 });
+
+// Fresh server state is shared, so this group runs after the core flows on a new memory-free path.
+describe('safety and learning on a phone', { serial: true }, () => {
+  test('memory comes back on after a reload', async ({ app, screen }) => {
+    await app.open('/');
+    await screen.getByRole('button', 'Settings').tap();
+    await screen.getByRole('button', 'Memory: off').tap();
+    await expect(screen.getByRole('button', 'Memory: on')).toBeVisible();
+    await screen.getByRole('button', 'Close settings').tap();
+  });
+
+  test('a one-letter-off name asks, and yes pays the right person', async ({ screen }) => {
+    await say(screen, 'send mun 5');
+    await expect(screen.getByTestId('say')).toHaveText('Did you mean Mum?');
+    await say(screen, 'yes');
+    await expect(screen.getByTestId('understood')).toContainText('Mum (0x33…33)');
+    await screen.getByRole('button', 'Cancel payment').tap();
+  });
+
+  test('fifteen against a usual of fifty is asked again', async ({ screen }) => {
+    await say(screen, 'send mum fifteen');
+    await expect(screen.getByTestId('say')).toContainText('Did you say 15 or 50?');
+  });
+
+  test('far above the usual needs a signature even inside the limit', async ({ screen }) => {
+    await say(screen, 'send mum 101');
+    await expect(screen.getByTestId('understood')).toContainText('101 USDC');
+    await expect(screen.getByRole('button', 'Approve with wallet')).toBeVisible();
+  });
+
+  test('settings show remembered people, limits and chain activity', async ({ screen }) => {
+    await screen.getByRole('button', 'Settings').tap();
+    await expect(screen.getByText('usually 50 USDC')).toBeVisible();
+    await expect(screen.getByText('100 USDC a week')).toBeVisible();
+    await screen.getByRole('button', 'Close settings').tap();
+  });
+});

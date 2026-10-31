@@ -8,7 +8,7 @@ import type { Action } from "@/lib/parse";
 import type { State } from "@/lib/records";
 
 type Health = { mock: boolean; network: string; tatum: boolean; walrusMemory: boolean; llm: string };
-type Snapshot = { owner: string; symbol: string; balance: string; state: State; activity: { name: string; amount: string; digest: string }[]; memory: { count: number; source: string; pending: number; error?: string }; questions: Question[] };
+type Snapshot = { owner: string; memoryOn: boolean; symbol: string; balance: string; state: State; activity: { name: string; amount: string; digest: string }[]; memory: { count: number; source: string; pending: number; error?: string }; questions: Question[] };
 type Outcome = { say: string; digest?: string; needsOwner?: string; bytes?: string; ok?: boolean; followUp?: Action };
 
 const AUTO_PAY_MS = 3000;
@@ -64,7 +64,6 @@ export default function Usual() {
   const [listening, setListening] = useState(false);
   const [typed, setTyped] = useState("");
   const [typing, setTyping] = useState(false);
-  const [memoryOn, setMemoryOn] = useState(true);
   const [voiceOn, setVoiceOn] = useState(readVoicePref);
   const [autoPaying, setAutoPaying] = useState(false);
   const [settings, setSettings] = useState(false);
@@ -298,7 +297,7 @@ export default function Usual() {
             </p>
           );
         })}
-        <button className="row-button" onClick={async () => { const r = await api<{ on: boolean }>("memory", { on: !memoryOn }); setMemoryOn(r.on); await refresh(); }}>Memory: {memoryOn ? "on" : "off"}</button>
+        <button className="row-button" onClick={async () => { await api("memory", { on: !snap?.memoryOn }); await refresh(); }}>Memory: {snap?.memoryOn === false ? "off" : "on"}</button>
         <button className="row-button" onClick={() => { close(); refresh(true).then(() => setHint("Rebuilt from Walrus Memory.")); }}>Rebuild from Walrus</button>
 
         <h2>Limits</h2>

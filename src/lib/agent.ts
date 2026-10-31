@@ -2,7 +2,7 @@
 // Walrus Memory says and what the limits allow before any money moves.
 import { env } from "./env";
 import { checkLimit, inferRecurring, suggestLimit, validateIntent, type ChainPayment, type Recurring } from "./insights";
-import { load, remember } from "./memory";
+import { load, memoryOn, remember } from "./memory";
 import { formatAmount, formatBalance, parseAmount, shortAddr } from "./money";
 import { parse, type Action } from "./parse";
 import { categoryFor, nameForAddress, reduce, resolveContact, type Category, type Rec, type Stamped, type State } from "./records";
@@ -52,6 +52,7 @@ export async function snapshot(fresh = false, skip: string[] = []) {
   const [mem, bal, hist] = await Promise.all([load(fresh), wallet.balance(), wallet.history()]);
   return {
     owner: wallet.owner(),
+    memoryOn: memoryOn(),
     symbol: env.symbol,
     balance: formatBalance(bal),
     memory: { count: mem.records.length, source: mem.source, pending: mem.pending, error: mem.error },
