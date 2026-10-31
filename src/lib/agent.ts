@@ -78,6 +78,11 @@ export async function talk(text: string, ctx: TalkContext): Promise<Reply> {
   return { ...base, ...out };
 }
 
+/** Runs one typed action directly, for callers that are not speech, like the MCP connector. */
+export async function act(action: Action, ctx: TalkContext = {}) {
+  return run(action, (await load()).state, ctx);
+}
+
 type Out = Omit<Reply, "heard" | "by" | "action" | "memoryError">;
 
 async function write(recs: Rec[]) {

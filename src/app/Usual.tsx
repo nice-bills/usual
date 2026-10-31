@@ -67,7 +67,8 @@ function Rolling({ value, ms = 800 }: { value: string; ms?: number }) {
     frame = requestAnimationFrame(tick);
     return () => { cancelAnimationFrame(frame); node.textContent = value; };
   }, [value, ms]);
-  return <span ref={el} />;
+  // Hold the width so the unit beside the number stays put while digits roll.
+  return <span ref={el} className="rolling" style={{ minInlineSize: `${Math.max(value.length, 6)}ch` }} />;
 }
 
 /** Words arrive one at a time. Stable keys mean only new words animate during live speech. */
