@@ -106,7 +106,7 @@ const spellings = (n: string) => SAME.find((g) => g.includes(n)) ?? [n];
 export function resolveContact(s: State, name: string): Resolved {
   const q = name.trim().toLowerCase().replace(/^(my|to)\s+/, "").replace(/'s$/, "");
   const all = Object.values(s.contacts);
-  const names = (c: Contact) => [c.name, ...(c.aliases ?? [])].map((n) => n.toLowerCase()).flatMap(spellings);
+  const names = (c: Contact) => [c.name, ...(c.aliases ?? [])].map((n) => n.toLowerCase()).flatMap((n) => [n, ...n.split(" ")]).flatMap(spellings);
   const exact = all.filter((c) => names(c).includes(q));
   if (exact.length === 1) return { kind: "one", contact: exact[0] };
   if (exact.length > 1) return { kind: "many", options: exact };

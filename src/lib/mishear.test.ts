@@ -47,6 +47,17 @@ describe("never pays the wrong person", () => {
   ])("%s refuses or asks", (text) => expect(outcome(text).paid).toBeNull());
 });
 
+describe("names that came through voice messily", () => {
+  const noisy = reduce([{ type: "CONTACT", name: "Dad Mom", address: MUM, source: "chain+user", v: 1 }, { type: "USUAL", name: "Dad Mom", amount: "50", v: 1 }]);
+  it("any whole word of a unique name resolves", () => {
+    expect(validateIntent(noisy, { to: "Mom" }, now, hist)).toMatchObject({ ok: true, plan: { contact: { address: MUM } } });
+  });
+  it("a word shared by two people still asks", () => {
+    expect(validateIntent(s, { to: "Mensah" }, now, hist)).toMatchObject({ ok: true });
+    expect(validateIntent(s, { to: "Kofi" }, now, hist)).toMatchObject({ ok: false });
+  });
+});
+
 describe("never trusts a misheard amount", () => {
   it.each(["send mum 15", "send mum fifteen"])("%s is checked against the usual 50", (text) => {
     const r = outcome(text);

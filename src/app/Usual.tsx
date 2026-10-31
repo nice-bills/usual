@@ -307,7 +307,8 @@ export default function Usual() {
     setHint("");
     setError("");
     r.interimResults = true;
-    r.continuous = true;
+    // Android Chrome repeats earlier words in continuous mode, which garbles names.
+    r.continuous = !/Android/i.test(navigator.userAgent);
     r.lang = navigator.language || "en-US";
     r.onresult = (e) => {
       const text = Array.from(e.results).map((x) => x[0].transcript).join("");
