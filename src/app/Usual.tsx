@@ -52,6 +52,7 @@ function Rolling({ value, ms = 800 }: { value: string; ms?: number }) {
       return;
     }
     const places = value.split(".")[1]?.length ?? 0;
+    node.textContent = from.toFixed(places);
     const start = performance.now();
     let frame = 0;
     const tick = (t: number) => {
