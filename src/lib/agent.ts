@@ -334,7 +334,7 @@ export async function afterSigned(kind: "pay" | "limit" | "cafe", bytes: string,
     const amount = parseAmount(meta.amount ?? "");
     if (!meta.category || amount == null || !meta.periodDays) return { ok: false, digest: r.digest, say: "Missing limit details." };
     await remember([{ type: "LIMIT", category: meta.category, amount: formatAmount(amount), periodDays: meta.periodDays, allowanceId, capId: r.caps[0] }]);
-    return { ok: true, digest: r.digest, allowanceId, say: `Limit set. The agent key can now spend at most ${formatAmount(amount)} on ${meta.category} a ${meta.periodDays === 1 ? "day" : meta.periodDays === 7 ? "week" : meta.periodDays === 30 ? "month" : `${meta.periodDays} days`}.` };
+    return { ok: true, digest: r.digest, allowanceId, say: `Done. I can spend up to ${formatAmount(amount)} ${env.symbol} a ${meta.periodDays === 1 ? "day" : meta.periodDays === 7 ? "week" : meta.periodDays === 30 ? "month" : `${meta.periodDays} days`} on ${meta.category}. Above that, I'll ask you.` };
   }
   return payCafe(meta.item ?? "flat-white", allowanceId, s);
 }

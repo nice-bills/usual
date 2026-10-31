@@ -30,7 +30,12 @@ export default function Page() {
           {p.blobs?.map((b) => <a key={b} className="row" href={`https://walruscan.com/mainnet/blob/${b}`} target="_blank" rel="noreferrer"><span>Blob</span><span>{b.slice(0, 10)}…</span></a>)}
           <h2>The chain refuses the agent, live</h2>
           <p>Dry-run through Tatum: the agent tries to spend {p.attempted} against a limit of {p.limit}.</p>
-          <p className="problem">{p.refusal ?? "No limit set yet."}</p>
+          {p.refusal ? (
+            <>
+              <p className="row"><span>Result</span><span>Refused: {p.refusal.match(/E[A-Z]\w+/)?.[0] ?? "by the chain"}</span></p>
+              <details className="fine"><summary>Full chain response</summary>{p.refusal}</details>
+            </>
+          ) : <p className="fine">No limit set yet.</p>}
         </>
       )}
       <h2>Testnet transactions</h2>

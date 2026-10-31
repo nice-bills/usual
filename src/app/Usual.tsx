@@ -77,7 +77,7 @@ function Tally({ count }: { count: number }) {
   const shown = Math.min(count, 10);
   const groups = Array.from({ length: Math.ceil(shown / 5) }, (_, g) => Math.min(5, shown - g * 5));
   return (
-    <svg className="tally" width={groups.length * 24 - 4} height="16" viewBox={`0 0 ${groups.length * 24 - 4} 16`} aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+    <svg className="tally" width={(groups.length * 24 - 4) * 1.5} height="24" viewBox={`0 0 ${groups.length * 24 - 4} 16`} aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
       {groups.map((n, g) => (
         <g key={g} transform={`translate(${g * 24} 0)`}>
           {Array.from({ length: Math.min(n, 4) }, (_, i) => <path key={i} pathLength={1} style={{ animationDelay: `${240 + (g * 5 + i) * 70}ms` }} d={`M${2 + i * 4} 2v12`} />)}
@@ -208,6 +208,7 @@ export default function Usual() {
     running.current = true;
     setError("");
     setBusy("Sending…");
+    const slow = setTimeout(() => setBusy((b) => (b === "Sending…" ? "Waiting for the network to confirm…" : b)), 1800);
     try {
       let r: Outcome;
       if (p.type === "pay") {
@@ -236,6 +237,7 @@ export default function Usual() {
     } catch (e) {
       setError((e as Error).message);
     } finally {
+      clearTimeout(slow);
       running.current = false;
       setBusy("");
     }
@@ -412,7 +414,7 @@ export default function Usual() {
         <h2>Try the café</h2>
         <button className="row-button" onClick={() => { close(); send("buy a flat white at the café"); }}>Café: flat white</button>
         <button className="row-button" onClick={() => { close(); send("pay for a croissant at the café"); }}>Café: croissant</button>
-        <p className="fine">{health?.mock ? "Mock mode: no keys, in-memory ledger." : `${health?.network} · Tatum ${health?.tatum ? "on" : "off"} · Walrus Memory ${health?.walrusMemory ? "on" : "off"}`} · parser: {health?.llm}</p>
+        {health?.mock && <p className="fine">Demo mode: play money, nothing leaves this device.</p>}
       </main>
     );
   }
@@ -447,7 +449,12 @@ export default function Usual() {
             {(proposal.type === "limit" || proposal.path === "owner" || error) && (
               <button className="approve" disabled={!!busy} onClick={() => execute(proposal)}>{busy || (error ? "Try again" : "Approve with wallet")}</button>
             )}
-            {busy && proposal.type !== "limit" && proposal.path === "agent" && !error && <p className="note">{busy}</p>}
+            {busy && !error && (
+              <>
+                {proposal.type !== "limit" && proposal.path === "agent" && <p className="note">{busy}</p>}
+                <div className="working" aria-hidden="true"><i /></div>
+              </>
+            )}
             {autoPaying && (
               <>
                 <p className="note">Sending in a moment</p>
