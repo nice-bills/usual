@@ -157,12 +157,12 @@ export default function Usual() {
         if (r.needsOwner) r = await signAndSubmit("cafe", r.needsOwner, { item: p.item });
       }
       // A payment ends as one check mark, then the screen returns to just the balance.
+      await refresh();
       setReply(null);
       setHeard("");
       setDone(r.say);
       setTimeout(() => setDone(null), 4000);
       speak(r.say);
-      await refresh();
     } catch (e) {
       setError((e as Error).message);
     } finally {
