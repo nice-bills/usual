@@ -29,3 +29,14 @@ Calls made while building, with the reason. Newest at the bottom.
 20. **Mock mode** (`pnpm dev:mock`, or any run without `TATUM_API_KEY`) uses an in-memory ledger with the same seeded history and the same three limits. Signing is echoed. Every flow runs with no keys.
 21. **Functional UI only for now.** The owner asked for the core first and the design pass afterwards.
 22. **LLM model: Groq `openai/gpt-oss-120b`.** `llama-3.3-70b-versatile` isn't served to this key; gpt-oss-120b handles tool calls and parsed every probe correctly. The e2e agent steps use `qwen/qwen3.8-27b`.
+23. **Small live amounts.** `DEMO_SCALE=0.05` shrinks seeded history, limits and café prices to fit 20 faucet USDC. The full-size demo runs on devnet with TUSD, a test dollar we published there.
+24. **History reads both senders.** The agent sends allowance payments, so payments are read for owner and agent, and only count when the owner's balance fell. Reading only the owner hid every agent payment from "the usual".
+25. **Beliefs carry evidence.** `beliefFor` uses the last six payments. The card shows "like the last 3 times" or "3 of the last 5 times". Below 50% agreement over three or more payments, Usual asks instead of guessing.
+26. **Limits are learned.** Once every payee is named, Usual proposes a limit for a category with spending and no limit (usual payment or monthly subscriptions plus 20%). Two owner approvals above a limit in 30 days proposes raising it. The owner signs either way.
+27. **Fraud guards sit above limits.** A first payment to a wallet, or more than double the usual, needs the owner even inside a limit.
+28. **Mishearing rules.** Names resolve only by exact match, spelling group (Mum, Mom, Mother), whole first name or clear prefix. A name one letter off gets "Did you mean Mum?". Teen/ty amounts (15 vs 50) that clash with the usual are re-asked. `src/lib/mishear.test.ts` asserts no case pays the wrong wallet.
+29. **The chain is the enforcer.** Proven live: a spend inside the allowance simulates fine, a spend above it aborts with `EExceedsRateLimit`. If memory says yes and the chain says no, Usual falls back to the owner signature.
+30. **Write queue survives restarts**, in a file in the OS temp directory. It holds unconfirmed writes only. A job that fails after acceptance goes back on the queue.
+31. **Activity comes from the chain, not memory**, so it stays true when a memory write failed.
+32. **Known limit on "your memory": a delegate key is not namespace-scoped.** Tested live: Usual's key can read other namespaces in the same account. Usual only ever queries its own, but that is our code, not an enforced boundary. For a real user, give Usual its own Walrus Memory account or keep sensitive memories elsewhere.
+33. **Replay score is synthetic.** `pnpm replay` walks 100 seeded payees forward. It shows the method beats repeating the last amount; it is not evidence from real users.

@@ -30,6 +30,16 @@ Open http://localhost:3000, then:
 
 The LLM proposes, code disposes. Speech becomes one typed action, from rules or a free LLM (Groq / Hugging Face). Server code validates every action against memory and limits. Ambiguity becomes a question ("Which Kofi?").
 
+The memory is a real learning loop:
+
+- Every belief carries evidence ("3 of the last 5 times"). Mixed evidence means Usual asks.
+- Limits are learned from spending and proposed to you. Repeated approvals propose a raise.
+- A first payment, or one far above normal, needs your signature even inside a limit.
+- Misheard names and amounts are checked, never guessed (`src/lib/mishear.test.ts`).
+- `/cafe` is a merchant counter with a QR request. `/proof` shows live evidence, including the chain refusing the agent.
+
+Replay on seeded, synthetic history (`pnpm replay`): Usual acts without asking 90.0% of the time and is right 87.3% of those times; repeating the last amount is right 77.2%.
+
 ## Setup (live)
 
 ```bash
@@ -49,7 +59,10 @@ See `.env.example`, `DECISIONS.md` and `PROGRESS.md`.
 
 ```bash
 corepack pnpm test
+corepack pnpm rehearse
 ```
+
+`rehearse` runs types, lint, unit and mishearing tests, the replay, the build, e2e, and live memory checks.
 
 ## Proof
 

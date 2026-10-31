@@ -78,15 +78,17 @@ export async function usdcBalance(address: string): Promise<bigint> {
 // listTransactions can't set a start, so this calls LedgerService.ListTransactions directly.
 let earliest: bigint | undefined;
 
+
 /** Outgoing USDC payments sent by `address`, newest first, read through Tatum. */
-export function outgoingPayments(address: string, limit = 200): Promise<ChainPayment[]> {
+export function outgoingPayments(address: string, limit = 200, spender = env.agentKey ? agent().toSuiAddress() : address): Promise<ChainPayment[]> {
   return paced(`hist:${address}`, async () => {
     for (let attempt = 0; ; attempt++) {
       try {
         const call = sui().ledgerService.listTransactions({
           readMask: { paths: ["digest", "balance_changes", "timestamp"] },
           startCheckpoint: earliest,
-          filter: { terms: [{ literals: [{ negated: false, predicate: { oneofKind: "sender", sender: { address } } }] }] },
+          // The agent sends allowance payments, so "what the owner paid" spans both senders.
+          filter: { terms: [address, spender].map((a) => ({ literals: [{ negated: false, predicate: { oneofKind: "sender" as const, sender: { address: a } } }] })) },
           options: { limit, ordering: 1 /* DESCENDING */ },
         });
         const out: ChainPayment[] = [];
@@ -94,8 +96,9 @@ export function outgoingPayments(address: string, limit = 200): Promise<ChainPay
           const tx = frame.transaction;
           if (!tx) continue;
           const at = tx.timestamp ? Number(tx.timestamp.seconds) * 1000 + Math.floor(tx.timestamp.nanos / 1e6) : Date.now();
+          if (!tx.balanceChanges.some((c) => c.coinType === env.usdc && c.address === address && BigInt(c.amount ?? "0") < 0n)) continue;
           for (const c of tx.balanceChanges) {
-            if (c.coinType === env.usdc && c.address !== address && BigInt(c.amount ?? "0") > 0n) {
+            if (c.coinType === env.usdc && c.address !== address && c.address !== spender && BigInt(c.amount ?? "0") > 0n) {
               out.push({ to: c.address!, amount: BigInt(c.amount!), digest: tx.digest!, at });
             }
           }

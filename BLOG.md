@@ -34,6 +34,13 @@ The memory changes what the product does, visibly:
 3. After three payments at a new amount, that amount becomes the new usual, and Usual tells you.
 4. Corrections are memories too. In our own first live run a test script labelled Mum and the gym the wrong way round. We fixed it the way a user would: newer facts superseded older ones, and the wrong record stayed in history without being believed.
 
+5. Beliefs carry evidence. "Like the last 3 times" comes from the chain, and when the last payments disagree, Usual asks. Replaying seeded, synthetic history, it was right 87.3% of the times it acted without asking, against 77.2% for repeating the last amount.
+6. Limits are learned. Once payees are named, Usual proposes a limit from what you spend. Approve above a limit twice and it proposes raising it.
+
+## Voice plus money
+
+A mishear must never move money. A name one letter off gets "Did you mean Mum?". "Fifteen" against a usual of fifty is asked again. A first payment, or one far above normal, needs a signature even inside a limit. A test set of perturbed transcripts asserts none of them pays the wrong wallet.
+
 ## Agent payments
 
 The café is an MPP merchant: it answers HTTP 402 until paid. The agent pays from the food allowance and proves it sent the transaction. Over the limit, one signature from you creates a one-shot allowance for exactly that price, valid for 10 minutes, and the agent finishes the payment. The agent never gets more authority than you gave it for that moment.

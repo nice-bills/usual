@@ -53,6 +53,8 @@
 - Writes that fail after acceptance now requeue (`settle` in `memory.ts`).
 - Blocked: since 31 Oct every Walrus Memory write fails upstream (`Enoki API error (400)` ... `MoveCall to disallowed function ...::system::reserve_space`), though `health` reports `write_ready: true`. Reads work. Devnet demo data (TUSD, full-size amounts, namespace `usual-demo`) is seeded and waits on this.
 
+- `/ambitious` round: evidence on beliefs, learned limits, fraud guards, mishear set, chain-refusal fallback (refusal proven live), restart-safe queue, chain-based activity, `/proof`, `pnpm rehearse`, replay score, namespace red team (see DECISIONS 32).
+
 ### Next (owner)
 1. Create the empty GitHub repo `nice-bills/usual`, add the remote, push.
 2. Deploy: import the repo in Vercel, or `vercel login` then deploy. Env vars from `.env`, but not `OWNER_SUI_PRIVATE_KEY` or payee keys; set `OWNER_ADDRESS` and `PUBLIC_ORIGIN`.

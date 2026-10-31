@@ -8,8 +8,8 @@ import type { Action } from "@/lib/parse";
 import type { State } from "@/lib/records";
 
 type Health = { mock: boolean; network: string; tatum: boolean; walrusMemory: boolean; llm: string };
-type Snapshot = { owner: string; symbol: string; balance: string; state: State; memory: { count: number; source: string; pending: number; error?: string }; questions: Question[] };
-type Outcome = { say: string; digest?: string; needsOwner?: string; bytes?: string; ok?: boolean };
+type Snapshot = { owner: string; symbol: string; balance: string; state: State; activity: { name: string; amount: string; digest: string }[]; memory: { count: number; source: string; pending: number; error?: string }; questions: Question[] };
+type Outcome = { say: string; digest?: string; needsOwner?: string; bytes?: string; ok?: boolean; followUp?: Action };
 
 const AUTO_PAY_MS = 3000;
 
@@ -161,7 +161,8 @@ export default function Usual() {
       setReply(null);
       setHeard("");
       setDone(r.say);
-      setTimeout(() => setDone(null), 4000);
+      setFollowUp(r.followUp ?? null);
+      setTimeout(() => setDone(null), r.followUp ? 8000 : 4000);
       speak(r.say);
     } catch (e) {
       setError((e as Error).message);
@@ -307,11 +308,11 @@ export default function Usual() {
         <p className="fine">The chain holds the agent to these. Above one, it waits for your wallet.</p>
 
         <h2>Activity</h2>
-        {state?.payments.length ? state.payments.slice(0, 5).map((p) => {
+        {snap?.activity.length ? snap.activity.map((p) => {
           const href = explorer(p.digest);
-          const text = <><span>{p.name ?? `${p.to.slice(0, 4)}…${p.to.slice(-2)}`}</span><span>{p.amount} {symbol}</span></>;
+          const text = <><span>{p.name}</span><span>{p.amount} {symbol}</span></>;
           return href ? <a key={p.digest} className="row" href={href} target="_blank" rel="noreferrer">{text}</a> : <p key={p.digest} className="row">{text}</p>;
-        }) : <p className="fine">Nothing sent through Usual yet.</p>}
+        }) : <p className="fine">Nothing sent yet.</p>}
 
         <h2>Voice</h2>
         <button className="row-button" aria-pressed={voiceOn} onClick={() => {

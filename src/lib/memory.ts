@@ -1,5 +1,8 @@
 // User knowledge lives only in the owner's Walrus Memory account. Usual holds a revocable
 // delegate key. State is rebuilt from Walrus on load; the in-process copy is a short cache.
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { MemWal, MemWalRateLimitedError } from "@mysten-incubation/memwal";
 import { env, MOCK } from "./env";
 import { decode, encode, keyOf, reduce, type Rec, type Stamped, type State } from "./records";
@@ -26,13 +29,33 @@ const memwal = () =>
 type Job = { id: string; record: Stamped };
 const g = globalThis as unknown as { __usual?: { records: Stamped[]; at: number; pending: Stamped[]; inflight: Job[]; jobs: string[]; mock: Stamped[]; memoryOn: boolean } };
 // Mock mode starts where `pnpm setup:allowances` leaves a real account: three category limits.
-const mockLimits = (): Stamped[] => ([["family", "100", 7], ["food", "3", 1], ["subscriptions", "60", 30]] as const)
+const mockLimits = (): Stamped[] => ([["family", "100", 7], ["food", "3", 1]] as const)
   .map(([category, amount, periodDays], i) => ({ type: "LIMIT", category, amount, periodDays, allowanceId: `0xMOCKALLOW${i}`, capId: `0xMOCKCAP${i}`, v: i + 1 }));
 const mem = (g.__usual ??= { records: [], at: 0, pending: [], inflight: [], jobs: [], mock: mockLimits(), memoryOn: true });
 
 /** Memory on/off toggle for the before/after demo. Off = the app behaves as if it remembers nothing. */
 export const setMemoryOn = (on: boolean) => { mem.memoryOn = on; };
 export const memoryOn = () => mem.memoryOn;
+
+// Unconfirmed writes survive a restart: a payment's memory must not die with the process.
+const queueFile = () => join(tmpdir(), `usual-queue-${env.memwalNamespace}.json`);
+function saveQueue() {
+  try {
+    writeFileSync(queueFile(), JSON.stringify([...mem.pending, ...mem.inflight.map((j) => j.record)]), { mode: 0o600 });
+  } catch (e) {
+    console.warn("[memory] couldn't persist the queue:", (e as Error).message);
+  }
+}
+let queueLoaded = false;
+function loadQueue() {
+  if (queueLoaded || MOCK) return;
+  queueLoaded = true;
+  try {
+    if (existsSync(queueFile())) mem.pending.push(...(JSON.parse(readFileSync(queueFile(), "utf8")) as Stamped[]));
+  } catch (e) {
+    console.warn("[memory] couldn't read the queue:", (e as Error).message);
+  }
+}
 
 const CACHE_MS = 60_000;
 
@@ -80,6 +103,7 @@ export async function remember(recs: Rec[]): Promise<{ stored: Stamped[]; queued
     return { stored, queued: 0 };
   }
   mem.pending.push(...stored);
+  saveQueue();
   await flush();
   return { stored, queued: mem.pending.length };
 }
@@ -120,6 +144,7 @@ let flushing: Promise<void> | null = null;
 let retryAt = 0;
 /** Send queued writes in batches of 20 (relayer limit: 60 req/min per key; 429 => wait retry_after). */
 export function flush(): Promise<void> {
+  loadQueue();
   if (flushing) return flushing;
   flushing = (async () => {
     await settle();
@@ -138,7 +163,7 @@ export function flush(): Promise<void> {
         break;
       }
     }
-  })().finally(() => { flushing = null; });
+  })().finally(() => { flushing = null; saveQueue(); });
   return flushing;
 }
 

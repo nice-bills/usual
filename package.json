@@ -18,7 +18,9 @@
     "check:walrus": "tsx --env-file=.env scripts/walrus-check.ts",
     "check:llm": "tsx --env-file=.env scripts/llm-check.ts",
     "check:rebuild": "tsx --env-file=.env scripts/live-rebuild.ts",
-    "devnet:setup": "SUI_NETWORK=devnet TATUM_SUI_GRPC_URL=sui-devnet-grpc.gateway.tatum.io:443 tsx --env-file=.env scripts/create-test-dollar.ts"
+    "devnet:setup": "SUI_NETWORK=devnet TATUM_SUI_GRPC_URL=sui-devnet-grpc.gateway.tatum.io:443 tsx --env-file=.env scripts/create-test-dollar.ts",
+    "rehearse": "bash scripts/rehearse.sh",
+    "replay": "tsx scripts/replay.ts"
   },
   "dependencies": {
     "@grpc/grpc-js": "^1.14.6",

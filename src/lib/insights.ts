@@ -1,6 +1,6 @@
 // Pure money logic: recurring-payee inference, limit checks, intent validation.
 import { formatAmount, parseAmount } from "./money";
-import { categoryFor, resolveContact, type Category, type Contact, type State } from "./records";
+import { categoryFor, nearContact, resolveContact, type Category, type Contact, type State } from "./records";
 
 export type ChainPayment = { to: string; amount: bigint; digest: string; at: number };
 
@@ -42,6 +42,50 @@ export function inferRecurring(payments: ChainPayment[]): Recurring[] {
   return out.sort((a, b) => b.count - a.count);
 }
 
+export type Belief = { usual: bigint; matches: number; total: number; confidence: number; seen: bigint[] };
+
+/** What the last six payments to a payee support, with the evidence to show the user. */
+export function beliefFor(hist: ChainPayment[], address: string): Belief | null {
+  const recent = hist.filter((p) => p.to === address).sort((a, b) => b.at - a.at).slice(0, 6);
+  if (!recent.length) return null;
+  const freq = new Map<bigint, number>();
+  for (const p of recent) freq.set(p.amount, (freq.get(p.amount) ?? 0) + 1);
+  const [usual, matches] = [...freq].sort((a, b) => b[1] - a[1])[0];
+  return { usual, matches, total: recent.length, confidence: matches / recent.length, seen: [...freq.keys()] };
+}
+
+/** Teens and tens sound alike: 15/50, 13/30. A spoken amount like this is checked, not trusted. */
+export function confusable(a: bigint, b: bigint): boolean {
+  const [lo, hi] = a < b ? [a, b] : [b, a];
+  const unit = 1_000_000n;
+  if (lo % unit || hi % unit) return false;
+  const [l, h] = [lo / unit, hi / unit];
+  return l >= 13n && l <= 19n && h === (l - 10n) * 10n;
+}
+
+/** Limits learned from behaviour: a category with spending and no limit gets a proposed one. */
+export function suggestLimit(s: State, hist: ChainPayment[], now = Date.now()) {
+  const PERIOD: Partial<Record<Category, number>> = { family: 7, food: 1, subscriptions: 30, transport: 7 };
+  const nice = (v: bigint) => { const u = 1_000_000n; return ((v + u - 1n) / u) * u; };
+  for (const [category, periodDays] of Object.entries(PERIOD) as [Category, number][]) {
+    if (s.limits[category]) continue;
+    const spent = hist.filter((p) => categoryFor(s, p.to) === category);
+    if (!spent.length) continue;
+    const base = category === "subscriptions"
+      ? Object.values(s.subscriptions).filter((x) => !x.cancelled).reduce((t, x) => t + (parseAmount(x.amount) ?? 0n), 0n)
+      : spent.reduce((m, p) => (p.amount > m ? p.amount : m), 0n);
+    if (base > 0n) return { category, amount: formatAmount(nice((base * 6n) / 5n)), periodDays };
+  }
+  // Repeated approvals above a limit mean the limit is wrong: propose raising it.
+  for (const [category, l] of Object.entries(s.limits) as [Category, NonNullable<State["limits"][Category]>][]) {
+    const over = s.payments.filter((p) => p.category === category && p.via === "owner" && p.at >= now - 30 * DAY);
+    if (over.length < 2) continue;
+    const top = over.reduce((m, p) => { const a = parseAmount(p.amount) ?? 0n; return a > m ? a : m; }, parseAmount(l.amount) ?? 0n);
+    return { category, amount: formatAmount(nice((top * 6n) / 5n)), periodDays: l.periodDays, raise: true };
+  }
+  return null;
+}
+
 /** Spent in the current fixed window for a category, from remembered payments. */
 export function spentInWindow(s: State, category: Category, periodDays: number, now = Date.now()): bigint {
   const since = now - periodDays * DAY;
@@ -73,13 +117,17 @@ export type Plan = {
   category: Category;
   reason: string;
   limit: LimitCheck;
+  guard?: string; // why this needs the owner even inside a limit
 };
-export type Validation = { ok: true; plan: Plan } | { ok: false; ask: string };
+export type Validation = { ok: true; plan: Plan } | { ok: false; ask: string; retry?: Intent };
 
 /** The LLM proposes, this disposes. Any ambiguity becomes a question. */
-export function validateIntent(s: State, intent: Intent, now = Date.now()): Validation {
+export function validateIntent(s: State, intent: Intent, now = Date.now(), hist?: ChainPayment[]): Validation {
   const r = resolveContact(s, intent.to);
-  if (r.kind === "none") return { ok: false, ask: `Who's ${intent.to}?` };
+  if (r.kind === "none") {
+    const near = nearContact(s, intent.to);
+    return near ? { ok: false, ask: `Did you mean ${near.name}?`, retry: { ...intent, to: near.name } } : { ok: false, ask: `Who's ${intent.to}?` };
+  }
   if (r.kind === "many") return { ok: false, ask: `Which ${intent.to}? ${r.options.map((c) => c.name).join(" or ")}?` };
   const contact = r.contact;
   const cancelled = s.subscriptions[contact.address]?.cancelled;
@@ -90,11 +138,18 @@ export function validateIntent(s: State, intent: Intent, now = Date.now()): Vali
   if (intent.amount != null && intent.amount !== "") {
     amount = parseAmount(intent.amount);
     if (amount == null) return { ok: false, ask: `How much should I send ${contact.name}?` };
+    const known = usual ? parseAmount(usual.amount) : null;
+    if (known && confusable(amount, known)) return { ok: false, ask: `Did you say ${formatAmount(amount)} or ${formatAmount(known)}? Say it once more with “dollars”, or “the usual”.`, retry: { to: contact.name, amount: formatAmount(known) } };
   } else if (usual) {
     amount = parseAmount(usual.amount);
-    reason = usual.count ? `like the last ${usual.count} times` : "your usual";
+    const b = hist && beliefFor(hist, contact.address);
+    if (b && b.total >= 3 && b.confidence < 0.5) return { ok: false, ask: `How much? Lately it's been ${b.seen.map(formatAmount).join(", ")}.` };
+    reason = b ? (b.matches === b.total ? `like the last ${b.total} times` : `${b.matches} of the last ${b.total} times`) : usual.count ? `like the last ${usual.count} times` : "your usual";
   }
   if (amount == null) return { ok: false, ask: `How much should I send ${contact.name}? I don't know a usual amount yet.` };
   const category = categoryFor(s, contact.address);
-  return { ok: true, plan: { contact, amount, amountText: formatAmount(amount), category, reason, limit: checkLimit(s, category, amount, now) } };
+  // Fraud checks: inside a limit is not enough for a first payment or a far larger one than normal.
+  const b = hist ? beliefFor(hist, contact.address) : undefined;
+  const guard = b === null ? "First payment to this wallet" : b && amount > b.usual * 2n ? "Much more than usual" : undefined;
+  return { ok: true, plan: { contact, amount, amountText: formatAmount(amount), category, reason, limit: checkLimit(s, category, amount, now), guard } };
 }

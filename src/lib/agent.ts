@@ -1,11 +1,11 @@
 // The executor. Parsed Actions are proposals; everything here is validated against what
 // Walrus Memory says and what the limits allow before any money moves.
 import { env } from "./env";
-import { checkLimit, inferRecurring, validateIntent, type ChainPayment, type Recurring } from "./insights";
+import { checkLimit, inferRecurring, suggestLimit, validateIntent, type ChainPayment, type Recurring } from "./insights";
 import { load, remember } from "./memory";
 import { formatAmount, formatBalance, parseAmount, shortAddr } from "./money";
 import { parse, type Action } from "./parse";
-import { categoryFor, nameForAddress, resolveContact, type Category, type Rec, type State } from "./records";
+import { categoryFor, nameForAddress, reduce, resolveContact, type Category, type Rec, type Stamped, type State } from "./records";
 import * as wallet from "./wallet";
 
 const DAY = 86_400_000;
@@ -57,6 +57,8 @@ export async function snapshot(fresh = false, skip: string[] = []) {
     memory: { count: mem.records.length, source: mem.source, pending: mem.pending, error: mem.error },
     state: mem.state,
     questions: questionsFrom(hist, mem.state, skip),
+    // From the chain, not memory: this stays true even when a memory write failed.
+    activity: hist.slice(0, 8).map((p) => ({ name: nameForAddress(mem.state, p.to) ?? (p.to === wallet.cafeAddress() ? "Café" : shortAddr(p.to)), amount: formatAmount(p.amount), digest: p.digest })),
   };
 }
 
@@ -171,9 +173,20 @@ async function name(a: Extract<Action, { kind: "name" }>, s: State, ctx: TalkCon
   recs.push({ type: "MENTION", name: a.name, at: Date.now() });
   const n = await write(recs);
   const skip = [...(ctx.skip ?? []), q.address];
-  const next = questionsFrom(hist, { ...s, contacts: { ...s.contacts, [a.name.toLowerCase()]: recs[0] as never } }, skip)[0] ?? null;
-  return { say: next ? `${say} ${next.text}` : say, asking: next, remembered: n };
+  const nowKnown: State = { ...s, contacts: { ...s.contacts, [a.name.toLowerCase()]: recs[0] as never } };
+  const next = questionsFrom(hist, nowKnown, skip)[0] ?? null;
+  if (next) return { say: `${say} ${next.text}`, asking: next, remembered: n };
+  // Everyone is named: propose the first limit from what the history shows.
+  const after = reduce([...stateRecords(s), ...recs.map((r) => ({ ...r, v: Date.now() }))]);
+  const sug = suggestLimit(after, hist);
+  if (!sug) return { say, asking: null, remembered: n };
+  return { say: `${say} You spend about that much on ${sug.category}. Cap it at ${sug.amount} ${env.symbol} a ${sug.periodDays === 30 ? "month" : sug.periodDays === 7 ? "week" : "day"}?`, asking: null, followUp: { kind: "set_limit", category: sug.category, amount: sug.amount, periodDays: sug.periodDays }, remembered: n };
 }
+
+/** State back to records, to fold new facts in before they are indexed. */
+const stateRecords = (s: State): Stamped[] =>
+  [...Object.values(s.contacts), ...Object.values(s.subscriptions), ...Object.values(s.limits), ...s.payments, ...Object.entries(s.categories).map(([address, category]) => ({ type: "CATEGORY" as const, address, category }))]
+    .map((r) => ({ v: 0, ...r }) as Stamped);
 
 function subscription(name: string, r: Recurring): Extract<Rec, { type: "SUBSCRIPTION" }> {
   return {
@@ -186,19 +199,22 @@ function subscription(name: string, r: Recurring): Extract<Rec, { type: "SUBSCRI
 }
 
 async function pay(a: Extract<Action, { kind: "pay" }>, s: State): Promise<Out> {
-  const v = validateIntent(s, { to: a.to, amount: a.amount });
-  if (!v.ok) return { say: v.ask, remembered: 0 };
+  const hist = await wallet.history();
+  const v = validateIntent(s, { to: a.to, amount: a.amount }, Date.now(), hist);
+  if (!v.ok) return { say: v.ask, followUp: v.retry ? { kind: "pay", to: v.retry.to, amount: v.retry.amount == null ? undefined : String(v.retry.amount) } : null, remembered: 0 };
   const { plan } = v;
   const short = plan.amount - (await wallet.balance());
   if (short > 0n) return { say: `That's ${formatAmount(short)} ${env.symbol} more than you have.`, remembered: 0 };
-  const allowanceId = plan.limit.ok ? plan.limit.allowanceId : undefined;
-  const p = await wallet.preview(plan.contact.address, plan.amount, allowanceId);
-  if (!p.ok && p.path === "agent") return { say: `The chain refused it: ${p.error}.`, remembered: 0 };
-  const overLimit = plan.limit.ok ? undefined : `over your ${plan.category} limit (${formatAmount(plan.limit.remaining)} left)`;
+  const allowanceId = plan.limit.ok && !plan.guard ? plan.limit.allowanceId : undefined;
+  let p = await wallet.preview(plan.contact.address, plan.amount, allowanceId);
+  // The chain is the real enforcer. If it refuses the agent, the owner can still pay.
+  const refused = !p.ok && p.path === "agent";
+  if (refused) p = await wallet.preview(plan.contact.address, plan.amount);
+  const overLimit = refused ? "over what the agent can spend" : plan.limit.ok ? plan.guard?.toLowerCase() : `over your ${plan.category} limit (${formatAmount(plan.limit.remaining)} left)`;
   const n = await write([{ type: "MENTION", name: plan.contact.name, at: Date.now() }]);
   const understood = `${plan.amountText} ${env.symbol} to ${plan.contact.name} (${shortAddr(plan.contact.address)})${plan.reason ? `, ${plan.reason}` : ""} · balance after: ${formatBalance(p.balanceAfter)}`;
   return {
-    say: overLimit ? `That's ${overLimit}. It needs your signature.` : p.path === "owner" ? "Sign to send it." : `Sending ${plan.contact.name} ${plan.amountText}.`,
+    say: overLimit ? `${plan.guard && plan.limit.ok && !refused ? plan.guard : `That's ${overLimit}`}, so it needs your signature.` : p.path === "owner" ? "Sign to send it." : `Sending ${plan.contact.name} ${plan.amountText}.`,
     understood,
     proposal: { type: "pay", to: plan.contact.name, name: plan.contact.name, address: plan.contact.address, amount: plan.amountText, category: plan.category, path: p.path, balanceAfter: formatBalance(p.balanceAfter), simulated: p.simulated, reason: plan.reason, overLimit },
     remembered: n,
@@ -211,8 +227,9 @@ async function cafeProposal(item: string, s: State): Promise<Out> {
   const lim = checkLimit(s, "food", q.amount);
   const bal = await wallet.balance();
   if (q.amount > bal) return { say: `That's ${formatAmount(q.amount - bal)} ${env.symbol} more than you have.`, remembered: 0 };
-  const overLimit = lim.ok ? undefined : `over your food limit (${formatAmount(lim.remaining)} left today)`;
-  const path: wallet.Path = lim.ok && lim.allowanceId ? "agent" : "owner";
+  const check = lim.ok && lim.allowanceId ? await wallet.preview(q.recipient, q.amount, lim.allowanceId) : null;
+  const overLimit = !lim.ok ? `over your food limit (${formatAmount(lim.remaining)} left today)` : check && !check.ok ? "over what the agent can spend" : undefined;
+  const path: wallet.Path = check?.ok ? "agent" : "owner";
   return {
     say: overLimit ? `${q.label} is ${formatAmount(q.amount)}. That's ${overLimit}, so I can't pay it on my own. Sign to approve this one.` : `Paying the café ${formatAmount(q.amount)} for a ${q.label.toLowerCase()}.`,
     understood: `${q.label} · ${formatAmount(q.amount)} ${env.symbol} to café (${shortAddr(q.recipient)}) over MPP · balance after: ${formatBalance(bal - q.amount)}`,
@@ -264,12 +281,11 @@ export function learnedUsual(s: State, name: string, address: string): string | 
 /** Confirmed agent payment: re-validate, pay inside the allowance, remember it. */
 export async function confirmPay(to: string, amount?: string) {
   const { state: s } = await load();
-  const v = validateIntent(s, { to, amount });
+  const v = validateIntent(s, { to, amount }, Date.now(), await wallet.history());
   if (!v.ok) return { ok: false as const, say: v.ask };
   const { plan } = v;
-  if (!plan.limit.ok || !plan.limit.allowanceId) {
-    if (!plan.limit.ok) return { ok: false as const, say: "Over the limit: this needs your signature.", needsOwner: await wallet.ownerPayBytes(plan.contact.address, plan.amount) };
-    return { ok: false as const, say: "No allowance for this yet: sign it yourself.", needsOwner: await wallet.ownerPayBytes(plan.contact.address, plan.amount) };
+  if (!plan.limit.ok || !plan.limit.allowanceId || plan.guard) {
+    return { ok: false as const, say: "This needs your signature.", needsOwner: await wallet.ownerPayBytes(plan.contact.address, plan.amount) };
   }
   const r = await wallet.agentPay(plan.contact.address, plan.amount, plan.limit.allowanceId);
   return { ok: true as const, ...(await recordPayment(s, plan.contact.address, plan.amount, r.digest, "agent")) };
@@ -278,7 +294,7 @@ export async function confirmPay(to: string, amount?: string) {
 /** Owner-signed payment bytes for a plan the server validated. */
 export async function ownerPay(to: string, amount?: string) {
   const { state: s } = await load();
-  const v = validateIntent(s, { to, amount });
+  const v = validateIntent(s, { to, amount }, Date.now(), await wallet.history());
   if (!v.ok) return { ok: false as const, say: v.ask };
   return { ok: true as const, bytes: await wallet.ownerPayBytes(v.plan.contact.address, v.plan.amount) };
 }
@@ -295,9 +311,11 @@ export async function recordPayment(s: State, address: string, amount: bigint, d
     recs.push({ ...u, count: (u.count ?? 0) + 1 });
   }
   await remember(recs);
+  const sug = suggestLimit({ ...after }, []);
   return {
     digest,
-    say: `Sent ${formatAmount(amount)} ${env.symbol}${name ? ` to ${name}` : ""}.${learned ? ` I'll treat ${learned} as ${name}'s usual from now on.` : ""}`,
+    followUp: sug?.raise ? ({ kind: "set_limit", category: sug.category, amount: sug.amount, periodDays: sug.periodDays } as Action) : undefined,
+    say: `Sent ${formatAmount(amount)} ${env.symbol}${name ? ` to ${name}` : ""}.${learned ? ` I'll treat ${learned} as ${name}'s usual from now on.` : ""}${sug?.raise ? ` You keep approving ${sug.category} above the limit. Raise it to ${sug.amount}?` : ""}`,
   };
 }
 

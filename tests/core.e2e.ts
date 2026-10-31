@@ -21,6 +21,7 @@ describe('Usual core flows (mock mode)', { serial: true }, () => {
     await expect(screen.getByTestId('say')).toContainText('Gym: 35 USDC a month, up from 30.');
     await say(screen, "It's Streamly, a streaming subscription");
     await expect(screen.getByTestId('say')).toContainText('Streamly: 12 USDC a month.');
+    await expect(screen.getByTestId('say')).toContainText('Cap it at');
   });
 
   test('send Mum her usual: understood line, then the agent pays inside the family allowance', async ({ screen }) => {
@@ -78,6 +79,16 @@ describe('Usual core flows (mock mode)', { serial: true }, () => {
     await screen.getByRole('button', 'Approve with wallet').doubleTap();
     await expect(screen.getByTestId('status')).toContainText('Sent 100 USDC to Mum.');
     await expect(screen.getByTestId('balance')).toHaveText('308.00 USDC');
+  });
+
+  test('a café QR link opens as a payment request', async ({ app, screen }) => {
+    await app.open('/cafe');
+    await expect(screen.getByRole('image', 'QR code to pay for Flat white')).toBeVisible();
+    await screen.getByRole('link', 'Open in Usual').tap();
+    await expect(screen.getByTestId('understood')).toContainText('Café · Flat white');
+    await app.open('/proof');
+    await expect(screen.getByRole('heading', 'Proof')).toBeVisible();
+    await app.open('/');
   });
 
   test('memory off: Usual forgets Mum', async ({ screen }) => {

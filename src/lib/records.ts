@@ -99,17 +99,38 @@ export function reduce(recs: Stamped[]): State {
 
 export type Resolved = { kind: "one"; contact: Contact } | { kind: "many"; options: Contact[] } | { kind: "none" };
 
-/** Find a contact by name or alias. Exact match first; otherwise prefix matches, which may be ambiguous. */
+const SAME = [["mum", "mom", "mam", "mother", "mummy", "mommy", "ma"], ["dad", "father", "daddy", "papa", "pa"]];
+const spellings = (n: string) => SAME.find((g) => g.includes(n)) ?? [n];
+
+/** Find a contact by name or alias. Exact match first, then a whole first name or clear prefix. Never a guess. */
 export function resolveContact(s: State, name: string): Resolved {
   const q = name.trim().toLowerCase().replace(/^(my|to)\s+/, "").replace(/'s$/, "");
   const all = Object.values(s.contacts);
-  const names = (c: Contact) => [c.name, ...(c.aliases ?? [])].map((n) => n.toLowerCase());
+  const names = (c: Contact) => [c.name, ...(c.aliases ?? [])].map((n) => n.toLowerCase()).flatMap(spellings);
   const exact = all.filter((c) => names(c).includes(q));
   if (exact.length === 1) return { kind: "one", contact: exact[0] };
   if (exact.length > 1) return { kind: "many", options: exact };
-  const fuzzy = all.filter((c) => names(c).some((n) => n.startsWith(q) || q.startsWith(n.split(" ")[0])));
+  const fuzzy = all.filter((c) => names(c).some((n) => n.split(" ")[0] === q || (q.length >= 3 && n.startsWith(q))));
   if (fuzzy.length === 1) return { kind: "one", contact: fuzzy[0] };
   return fuzzy.length ? { kind: "many", options: fuzzy } : { kind: "none" };
+}
+
+function distance(a: string, b: string): number {
+  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= b.length; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    prev = cur;
+  }
+  return prev[b.length];
+}
+
+/** A contact one letter away from what was heard, to confirm and never to pay directly. */
+export function nearContact(s: State, name: string): Contact | undefined {
+  const q = name.trim().toLowerCase();
+  if (q.length < 3 || q.includes(" ")) return undefined;
+  const near = Object.values(s.contacts).filter((c) => distance(q, c.name.toLowerCase().split(" ")[0]) === 1);
+  return near.length === 1 ? near[0] : undefined;
 }
 
 export const nameForAddress = (s: State, address: string) => Object.values(s.contacts).find((c) => c.address === address)?.name;
