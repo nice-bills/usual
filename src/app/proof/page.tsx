@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
-type Proof = { mock: boolean; network?: string; account?: string; namespace?: string; count?: number; blobs?: string[]; limit?: string | null; refusal?: string | null };
+type Proof = { mock: boolean; network?: string; account?: string; namespace?: string; count?: number; blobs?: string[]; limit?: string | null; attempted?: string | null; refusal?: string | null };
 
 const TXS = [
   ["Agent pays from the family allowance", "YPjCY2bJMgDMkrTMM6Wd6Pna9Yoggp9i6Zpaj4Z7AVE"],
@@ -29,7 +29,7 @@ export default function Page() {
           <p className="fine">Account {p.account}, namespace {p.namespace}</p>
           {p.blobs?.map((b) => <a key={b} className="row" href={`https://walruscan.com/mainnet/blob/${b}`} target="_blank" rel="noreferrer"><span>Blob</span><span>{b.slice(0, 10)}…</span></a>)}
           <h2>The chain refuses the agent, live</h2>
-          <p>Dry-run through Tatum: the agent tries to spend 1,000 against a limit of {p.limit}.</p>
+          <p>Dry-run through Tatum: the agent tries to spend {p.attempted} against a limit of {p.limit}.</p>
           <p className="problem">{p.refusal ?? "No limit set yet."}</p>
         </>
       )}
