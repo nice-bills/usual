@@ -75,6 +75,19 @@ check("server cannot pay: it hands back bytes", !!pay.agentBytes);
 const paid = await api("submit", { kind: "agent-pay", ...(await asDevice(pay.agentBytes)), meta: {} });
 check("device key paid", paid.ok === true && !!paid.digest, paid.say);
 
+// Call the payment wrong: the line stops at once, then one signature cuts it on the chain.
+const line = (await api("state")).state.limits.family;
+const wrong = await say("that was wrong");
+const report = (await api("state")).credit;
+const held = await say("Send Mum her usual");
+check("a mistake stops the agent at once", report.suspended.includes("family") && held.proposal?.path === "owner", `${wrong.say} | ${held.say}`);
+const cut = await api("limit", { category: "family", amount: wrong.followUp.amount, periodDays: wrong.followUp.periodDays });
+const cutDone = await api("submit", { kind: "limit", ...(await asOwner(cut.bytes)), meta: { category: "family", amount: wrong.followUp.amount, periodDays: wrong.followUp.periodDays } });
+const cutLine = (await api("state")).state.limits.family;
+check("the cut is a new, smaller line on the chain", cutDone.ok === true && cutLine.amount === "50" && cutLine.allowanceId !== line.allowanceId, `${line.amount} to ${cutLine.amount}`);
+const gone = await sui().core.getObject({ objectId: line.allowanceId }).then(() => false, () => true);
+check("the old line no longer exists", gone);
+
 const over = await say("Send Mum 500");
 check("far over: owner signature", over.proposal?.path === "owner", over.say);
 
@@ -96,11 +109,6 @@ const tx = await device.signTransaction(fromBase64(shot.agentCafe.bytes));
 const proof = await device.signPersonalMessage(fromBase64(shot.agentCafe.proof));
 const receipt = await api("cafe/finish", { item: "flat-white", challenge: shot.agentCafe.challenge, bytes: tx.bytes, signature: tx.signature, proofSignature: proof.signature });
 check("MPP paid from the device", !!receipt.digest, receipt.say);
-
-const wrong = await say("that was wrong");
-const report = (await api("state")).credit;
-const again = await say("Send Mum her usual");
-check("a mistake costs the agent its line", report.suspended.length === 1 && again.proposal?.path === "owner", `${wrong.say} | ${again.say}`);
 
 // Claiming later moves what Usual already learned into the wallet's own account.
 const before = (await api("state?fresh=1")).memory.count;
@@ -125,11 +133,11 @@ const added = await api("submit", { kind: "deposit", ...(await asOwner(d.bytes))
 check("owner moves it where limits reach", added.ok === true, added.say);
 
 // Ownership means the owner can lock Usual out.
-const held = await api("state");
+const before2 = await api("state");
 await claim(true);
 const after = await api("state?fresh=1");
 const blind = await say("when do I have to pay rent?");
-check("owner revokes, Usual knows nothing", after.memory.account === null && after.memoryOn === false && held.memory.count > 0 && !/first/i.test(blind.say), `${held.memory.count} memories, then ${after.memory.count}`);
+check("owner revokes, Usual knows nothing", after.memory.account === null && after.memoryOn === false && before2.memory.count > 0 && !/first/i.test(blind.say), `${before2.memory.count} memories, then ${after.memory.count}`);
 
 console.log(failures ? `\n${failures} FAILED` : "\nall passed");
 process.exit(failures ? 1 : 0);

@@ -78,4 +78,4 @@ Wallet-owned memory: the same script now claims a real mainnet Walrus account fr
 
 Real phone test (1 Nov): Slush zkLogin sign-in, mainnet memory claim and a device-signed payment all worked. Voice, noise and first-run friction fixed from what the logs showed: DECISIONS 47 to 50.
 
-Agent credit added (DECISIONS 51, 52). Unit and e2e pass in demo mode. Not yet run live on testnet: the demo wallet is out of gas for a new tester.
+Agent credit added (DECISIONS 51, 52). The full new-wallet flow passes on the hosted site, including a mistake suspending a line and one signature replacing it with a smaller one on-chain.
