@@ -11,7 +11,7 @@ const records: Stamped[] = [
 const preview = vi.fn();
 
 vi.mock("./env", () => ({ MOCK: true, USDC_DECIMALS: 6, env: { symbol: "USDC" } }));
-vi.mock("./parse", () => ({ parse: async () => ({ action: { kind: "pay", to: "Mum" }, by: "rules" }) }));
+vi.mock("./parse", () => ({ notAName: () => false, parse: async () => ({ action: { kind: "pay", to: "Mum" }, by: "rules" }) }));
 vi.mock("./memory", () => ({ load: async () => ({ state: reduce(records), records, source: "mock", pending: 0 }), remember: async (r: unknown[]) => ({ stored: r, queued: 0 }), memoryOn: () => true }));
 vi.mock("./wallet", () => ({
   preview: (...a: unknown[]) => preview(...a),
