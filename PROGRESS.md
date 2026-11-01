@@ -69,3 +69,7 @@
 ### Known risks
 - The write queue is a file in the OS temp directory: on Vercel a new instance has an empty one, so a queued write can still be lost there.
 - The app-side window spend (`spentInWindow`) approximates the chain's fixed window. The chain is the real enforcer; the app check only decides which path to offer.
+
+## Public testnet (1 Nov 2026)
+
+Any wallet can now use a deployment. `scripts/live-device.ts` runs a brand-new wallet through everything on testnet with real Walrus memory: faucet, sample history, naming, limit, device-signed payment, memory overriding a limit, semantic recall, MPP café from the device, deposit. All passed. Not yet tried with a real Slush wallet in a browser. See DECISIONS 38 to 43. Deploy config for Render is `.env.public` (never committed), written by `pnpm testnet:setup`. README, BLOG and the demo video still describe the single-owner build.

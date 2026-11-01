@@ -1,12 +1,14 @@
 // One facade over money movement. Real mode: Tatum gRPC + Sui allowances + MPP.
 // Mock mode (no keys): the same flows over an in-memory ledger, so anyone can try Usual.
+import { Ed25519Keypair } from "@mysten/sui/keypairs/ed25519";
 import { Transaction } from "@mysten/sui/transactions";
-import { addAllowance, createdAllowances, revokeAllowance } from "./allowances";
-import { agent, buildForOwner, executeAndConfirm, outgoingPayments, ownerAddress, simulate, transferTx, usdcBalance } from "./chain";
+import { addAllowance, createdAllowances, depositToAddressBalance, revokeAllowance } from "./allowances";
+import { agent, agentAddress, buildForOwner, executeAndConfirm, gasBalance, looseCoins, outgoingPayments, ownerAddress, simulate, transferTx, usdcBalance } from "./chain";
 import { env, MOCK } from "./env";
 import type { ChainPayment } from "./insights";
-import { MENU, payWithAllowance, quote } from "./mpp";
+import { MENU, payWithAllowance, prepareAllowancePayment, quote, settleAllowancePayment } from "./mpp";
 import { parseAmount } from "./money";
+import { deviceAgent } from "./user";
 
 const DAY = 86_400_000;
 const hex = (c: string) => "0x" + c.repeat(64);
@@ -52,7 +54,7 @@ export async function preview(to: string, amount: bigint, allowanceId?: string) 
   const bal = await balance();
   if (MOCK) return { path, ok: amount <= bal, error: amount <= bal ? null : "insufficient balance", balanceAfter: bal - amount, simulated: false };
   const tx = path === "agent"
-    ? transferTx({ sender: agent().toSuiAddress(), to, amount, allowance: { objectId: allowanceId!, funder: owner() } })
+    ? transferTx({ sender: agentAddress(), to, amount, allowance: { objectId: allowanceId!, funder: owner() } })
     : transferTx({ sender: owner(), to, amount });
   try {
     const sim = await simulate(tx, owner());
@@ -69,6 +71,12 @@ export async function agentPay(to: string, amount: bigint, allowanceId: string) 
   return executeAndConfirm({ tx, signer: agent() });
 }
 
+/** Unsigned bytes for the agent key on the user's device. */
+export const agentPayBytes = (to: string, amount: bigint, allowanceId: string) =>
+  buildForOwner(transferTx({ sender: agentAddress(), to, amount, allowance: { objectId: allowanceId, funder: owner() } }));
+
+export const onDevice = () => !MOCK && !!deviceAgent();
+
 /** Unsigned transaction bytes for the owner's wallet. */
 export async function ownerPayBytes(to: string, amount: bigint) {
   if (MOCK) return mockBytes({ kind: "pay", to, amount: String(amount) });
@@ -81,7 +89,8 @@ export async function limitBytes(opts: { category: string; amount: bigint; perio
   const tx = new Transaction();
   tx.setSender(owner());
   if (opts.old) revokeAllowance(tx, opts.old.capId, opts.old.allowanceId);
-  addAllowance(tx, { name: `Usual · ${opts.category}`, spender: agent().toSuiAddress(), amount: opts.amount, periodDays: opts.periodDays });
+  addAllowance(tx, { name: `Usual · ${opts.category}`, spender: agentAddress(), amount: opts.amount, periodDays: opts.periodDays });
+  await fuelAgent(tx);
   return buildForOwner(tx);
 }
 
@@ -90,7 +99,76 @@ export async function oneShotBytes(label: string, amount: bigint) {
   if (MOCK) return mockBytes({ kind: "oneshot", amount: String(amount) });
   const tx = new Transaction();
   tx.setSender(owner());
-  addAllowance(tx, { name: `Usual · once · ${label}`, spender: agent().toSuiAddress(), amount, lifetime: { expiresAt: Date.now() + 10 * 60_000 } });
+  addAllowance(tx, { name: `Usual · once · ${label}`, spender: agentAddress(), amount, lifetime: { expiresAt: Date.now() + 10 * 60_000 } });
+  await fuelAgent(tx);
+  return buildForOwner(tx);
+}
+
+const dollars = (n: number) => BigInt(Math.round(n * 1e6));
+const TEST_MONEY = dollars(1000);
+const OWNER_GAS = 50_000_000n; // 0.05 SUI: the owner's approvals plus the agent's fuel.
+const AGENT_GAS = 20_000_000n;
+const LOW_GAS = 30_000_000n;
+// Oldest first, so the gym's rise from 30 to 35 shows up as a price change.
+const SAMPLE_PAYMENTS = [[50, 30, 12], [50, 30, 12], [50, 35, 12]];
+export const sampleRounds = SAMPLE_PAYMENTS.length;
+
+/** The device key pays its own gas, so whoever signs for it tops it up in the same approval. */
+async function fuelAgent(tx: Transaction) {
+  const spender = deviceAgent();
+  if (!spender || (await gasBalance(spender)) >= AGENT_GAS / 4n) return;
+  if (env.treasuryCap) await claimTestMoney();
+  const [fuel] = tx.splitCoins(tx.gas, [AGENT_GAS]);
+  tx.transferObjects([fuel], spender);
+}
+
+/** Public testnet: fill an empty wallet with test dollars and gas. Anyone signed in can ask; a funded wallet gets nothing. */
+export async function claimTestMoney() {
+  if (MOCK) return;
+  if (!env.treasuryCap) throw new Error("test money isn't set up on this deployment");
+  const me = owner();
+  const [money, gas] = await Promise.all([usdcBalance(me), gasBalance(me)]);
+  if (money > 0n && gas >= LOW_GAS) return;
+  const faucet = Ed25519Keypair.fromSecretKey(env.ownerKey);
+  const tx = new Transaction();
+  tx.setSender(faucet.toSuiAddress());
+  if (money === 0n) {
+    const coin = tx.moveCall({ target: "0x2::coin::mint", typeArguments: [env.usdc], arguments: [tx.object(env.treasuryCap), tx.pure.u64(TEST_MONEY)] });
+    tx.moveCall({ target: "0x2::coin::send_funds", typeArguments: [env.usdc], arguments: [coin, tx.pure.address(me)] });
+  }
+  if (gas < LOW_GAS) {
+    const [fuel] = tx.splitCoins(tx.gas, [OWNER_GAS]);
+    tx.transferObjects([fuel], me);
+  }
+  await executeAndConfirm({ tx, signer: faucet });
+}
+
+/** One approval lets the device key lay down sample history, so a new wallet has patterns to learn from. */
+export async function starterBytes() {
+  if (MOCK) return mockBytes({ kind: "oneshot", amount: "0" });
+  return oneShotBytes("sample payments", SAMPLE_PAYMENTS.flat().reduce((sum, n) => sum + dollars(n), 0n));
+}
+
+/** One transaction paying all three sample payees, spent from the one-shot allowance. */
+export async function seedBytes(allowanceId: string, round: number) {
+  const from = { objectId: allowanceId, funder: owner() };
+  const tx = new Transaction();
+  tx.setSender(agentAddress());
+  SAMPLE_PAYMENTS[round].forEach((amount, i) => {
+    const coin = tx.coin({ balance: dollars(amount), type: env.usdc, allowance: from });
+    tx.transferObjects([coin], [MOCK_ADDR.mum, MOCK_ADDR.gym, MOCK_ADDR.stream][i]);
+  });
+  return buildForOwner(tx);
+}
+
+/** Money sitting as loose coins, waiting to be moved where limits can reach it. */
+export const looseBalance = async () => (MOCK ? 0n : (await looseCoins(owner())).total);
+
+export async function depositBytes() {
+  if (MOCK) return mockBytes({ kind: "deposit" });
+  const tx = new Transaction();
+  tx.setSender(owner());
+  depositToAddressBalance(tx, owner(), (await looseCoins(owner())).ids);
   return buildForOwner(tx);
 }
 
@@ -118,6 +196,13 @@ export async function cafeQuote(item: string, origin: string) {
   const q = await quote(`${origin}/api/cafe/${item}`);
   return { ...q, label: MENU[item].label };
 }
+
+/** Device path: everything the device must sign to pay this 402. */
+export const cafePrepare = (item: string, origin: string, allowanceId: string, max: bigint) =>
+  prepareAllowancePayment(`${origin}/api/cafe/${item}`, { objectId: allowanceId, funder: owner() }, agentAddress(), max);
+
+export const cafeSettle = (item: string, origin: string, challenge: string, bytes: string, signature: string, proofSignature: string) =>
+  settleAllowancePayment(`${origin}/api/cafe/${item}`, challenge, bytes, signature, proofSignature);
 
 export async function cafePay(item: string, origin: string, allowanceId: string, max: bigint) {
   if (MOCK) {

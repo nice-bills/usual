@@ -75,7 +75,7 @@ export function parseRules(raw: string, ctx: Context): Action {
   }
 
   // A pending question means a bare phrase is its answer, even if it says "subscription".
-  if (ctx.asking && !naming && !/^(send|pay|give|transfer|what|where|how|show|cancel|limit|cap|buy|order|remember|forget)\b/.test(t)) {
+  if (ctx.asking && !naming && !raw.trim().endsWith("?") && !/^(send|pay|give|transfer|what|where|when|why|who|whose|which|how|did|do|does|is|are|am|can|could|should|would|will|have|has|tell|show|cancel|limit|cap|buy|order|remember|forget)\b/.test(t)) {
     const relation = t.split(/\s+/).find((w) => RELATIONS[w]);
     const head = clean(t.split(/,|\s+(?:a|an|the|my|for)\s+/)[0]);
     const name = title(head.replace(/\b(membership|subscription|account)\b/g, "").trim() || head);
@@ -152,6 +152,25 @@ Known contacts: ${ctx.contacts.join(", ") || "none yet"}.${ctx.asking ? `\nUsual
   } catch (e) {
     console.warn("[llm] falling back to rules:", (e as Error).message);
     return null;
+  }
+}
+
+/** Answer from recalled memories and nothing else. No LLM: the nearest memory, as it was saved. */
+export async function answerFrom(question: string, memories: string[]): Promise<string> {
+  if (!env.llmKey) return memories[0];
+  const system = `You are Usual, a wallet that remembers. Answer in one or two short spoken sentences, using only these memories. If they don't answer it, say you don't know yet. Never give financial advice.\n${memories.map((m) => `- ${m}`).join("\n")}`;
+  try {
+    const res = await fetch(`${env.llmUrl.replace(/\/$/, "")}/chat/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${env.llmKey}` },
+      body: JSON.stringify({ model: env.llmModel, temperature: 0, messages: [{ role: "system", content: system }, { role: "user", content: question }] }),
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (!res.ok) throw new Error(`${res.status}`);
+    return (await res.json()).choices?.[0]?.message?.content?.trim() || memories[0];
+  } catch (e) {
+    console.warn("[llm] answering from the nearest memory:", (e as Error).message);
+    return memories[0];
   }
 }
 

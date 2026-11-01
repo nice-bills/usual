@@ -4,8 +4,10 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MemWal, MemWalRateLimitedError } from "@mysten-incubation/memwal";
+import { operatorAddress } from "./chain";
 import { env, MOCK } from "./env";
-import { decode, encode, keyOf, reduce, type Rec, type Stamped, type State } from "./records";
+import { decode, encode, keyOf, reduce, sentence, type Rec, type Stamped, type State } from "./records";
+import { currentUser } from "./user";
 
 export type Loaded = { state: State; records: Stamped[]; source: "walrus" | "cache" | "mock"; error?: string; pending: number };
 
@@ -20,36 +22,56 @@ const QUERIES = [
   "Preference: setting is value",
   "Spending category: payments count as category",
   "Mention: the user talked about",
+  "Deposit: the user added USDC to their balance",
 ];
 
-let client: MemWal | undefined;
-const memwal = () =>
-  (client ??= MemWal.create({ key: env.memwalKey, accountId: env.memwalAccount, serverUrl: env.memwalUrl, namespace: env.memwalNamespace }));
-
 type Job = { id: string; record: Stamped };
-const g = globalThis as unknown as { __usual?: { records: Stamped[]; at: number; pending: Stamped[]; inflight: Job[]; jobs: string[]; mock: Stamped[]; memoryOn: boolean } };
+type Store = {
+  records: Stamped[]; at: number; pending: Stamped[]; inflight: Job[]; jobs: string[]; mock: Stamped[]; memoryOn: boolean;
+  client?: MemWal; queueLoaded: boolean; rebuilding: Promise<Loaded> | null; flushing: Promise<void> | null; retryAt: number; settledAt: number;
+};
+
+// Each wallet gets its own namespace; the demo wallet keeps the original one.
+// shortcut: all testers share one Walrus Memory account (see DECISIONS 32), so the wall between them is this code. Give each wallet its own account for real users.
+const namespace = () => {
+  const user = currentUser();
+  return !user || user === operatorAddress() ? env.memwalNamespace : `usual-${user.slice(2, 18)}`;
+};
+const memwal = () => {
+  const s = store();
+  return (s.client ??= MemWal.create({ key: env.memwalKey, accountId: env.memwalAccount, serverUrl: env.memwalUrl, namespace: namespace() }));
+};
+
+const g = globalThis as unknown as { __usual?: Map<string, Store> };
 // Mock mode starts where `pnpm setup:allowances` leaves a real account: three category limits.
 const mockLimits = (): Stamped[] => ([["family", "100", 7], ["food", "3", 1]] as const)
   .map(([category, amount, periodDays], i) => ({ type: "LIMIT", category, amount, periodDays, allowanceId: `0xMOCKALLOW${i}`, capId: `0xMOCKCAP${i}`, v: i + 1 }));
-const mem = (g.__usual ??= { records: [], at: 0, pending: [], inflight: [], jobs: [], mock: mockLimits(), memoryOn: true });
+function store(): Store {
+  const stores = (g.__usual ??= new Map());
+  const key = namespace();
+  let s = stores.get(key);
+  if (!s) stores.set(key, (s = { records: [], at: 0, pending: [], inflight: [], jobs: [], mock: mockLimits(), memoryOn: true, queueLoaded: false, rebuilding: null, flushing: null, retryAt: 0, settledAt: 0 }));
+  return s;
+}
 
 /** Memory on/off toggle for the before/after demo. Off = the app behaves as if it remembers nothing. */
-export const setMemoryOn = (on: boolean) => { mem.memoryOn = on; };
-export const memoryOn = () => mem.memoryOn;
+export const setMemoryOn = (on: boolean) => { store().memoryOn = on; };
+export const memoryOn = () => store().memoryOn;
 
 // Unconfirmed writes survive a restart: a payment's memory must not die with the process.
-const queueFile = () => join(tmpdir(), `usual-queue-${env.memwalNamespace}.json`);
+const queueFile = () => join(tmpdir(), `usual-queue-${namespace()}.json`);
 function saveQueue() {
+  const mem = store();
   try {
     writeFileSync(queueFile(), JSON.stringify([...mem.pending, ...mem.inflight.map((j) => j.record)]), { mode: 0o600 });
   } catch (e) {
     console.warn("[memory] couldn't persist the queue:", (e as Error).message);
   }
 }
-let queueLoaded = false;
 function loadQueue() {
-  if (queueLoaded || MOCK) return;
-  queueLoaded = true;
+  const mem = store();
+  if (mem.queueLoaded || MOCK) return;
+  mem.queueLoaded = true;
   try {
     if (existsSync(queueFile())) mem.pending.push(...(JSON.parse(readFileSync(queueFile(), "utf8")) as Stamped[]));
   } catch (e) {
@@ -61,6 +83,7 @@ const CACHE_MS = 60_000;
 
 /** Rebuild state. `fresh` bypasses the cache and reads everything back from Walrus. */
 export async function load(fresh = false): Promise<Loaded> {
+  const mem = store();
   if (!mem.memoryOn) return { state: reduce([]), records: [], source: MOCK ? "mock" : "cache", pending: 0 };
   if (MOCK) return { state: reduce(mem.mock), records: mem.mock, source: "mock", pending: 0 };
   void flush();
@@ -68,11 +91,11 @@ export async function load(fresh = false): Promise<Loaded> {
     const records = [...mem.records, ...mem.pending];
     return { state: reduce(records), records, source: "cache", pending: unsaved() };
   }
-  return (rebuilding ??= rebuild().finally(() => { rebuilding = null; }));
+  return (mem.rebuilding ??= rebuild().finally(() => { mem.rebuilding = null; }));
 }
 
-let rebuilding: Promise<Loaded> | null = null;
 async function rebuild(): Promise<Loaded> {
+  const mem = store();
   try {
     const seen = new Map<string, Stamped>();
     for (const res of await Promise.all(QUERIES.map((query) => memwal().recall({ query, limit: 100 })))) {
@@ -98,8 +121,26 @@ async function rebuild(): Promise<Loaded> {
   }
 }
 
+/** What memory says about this, by meaning: the plain sentences, nearest first. Never throws; a chat reply shouldn't die on it. */
+export async function recallAbout(query: string, limit = 6): Promise<string[]> {
+  const mem = store();
+  if (!mem.memoryOn) return [];
+  if (MOCK) {
+    const words = query.toLowerCase().match(/[a-z]{4,}/g) ?? [];
+    return mem.mock.map(sentence).filter((t) => words.some((w) => t.toLowerCase().includes(w))).slice(0, limit);
+  }
+  try {
+    const res = await memwal().recall({ query, limit });
+    return res.results.map((hit) => hit.text.split(" || ")[0]);
+  } catch (e) {
+    console.warn("[memory] recall failed:", (e as Error).message);
+    return [];
+  }
+}
+
 /** Store facts. Returns at once; failed writes stay queued and retry on the next request. */
 export async function remember(recs: Rec[]): Promise<{ stored: Stamped[]; queued: number }> {
+  const mem = store();
   if (!mem.memoryOn) return { stored: [], queued: 0 };
   const now = Date.now();
   const stored = recs.map((r, i) => ({ ...r, v: now + i }) as Stamped);
@@ -123,11 +164,11 @@ export function failedJobs(inflight: Job[], statuses: { job_id: string; status: 
   };
 }
 
-let settledAt = 0;
 /** Put writes that failed after acceptance back on the queue, so nothing is lost. */
 async function settle() {
-  if (!mem.inflight.length || Date.now() - settledAt < 5_000) return;
-  settledAt = Date.now();
+  const mem = store();
+  if (!mem.inflight.length || Date.now() - mem.settledAt < 5_000) return;
+  mem.settledAt = Date.now();
   try {
     const res = await memwal().getRememberBulkStatus(mem.inflight.map((j) => j.id).slice(0, 20));
     const { failed, waiting } = failedJobs(mem.inflight, res.results);
@@ -144,17 +185,16 @@ async function settle() {
 }
 
 /** Writes not yet confirmed on Walrus. */
-export const unsaved = () => mem.pending.length + mem.inflight.length;
+export const unsaved = () => store().pending.length + store().inflight.length;
 
-let flushing: Promise<void> | null = null;
-let retryAt = 0;
 /** Send queued writes in batches of 20 (relayer limit: 60 req/min per key; 429 => wait retry_after). */
 export function flush(): Promise<void> {
+  const mem = store();
   loadQueue();
-  if (flushing) return flushing;
-  flushing = (async () => {
+  if (mem.flushing) return mem.flushing;
+  mem.flushing = (async () => {
     await settle();
-    while (mem.pending.length && Date.now() >= retryAt) {
+    while (mem.pending.length && Date.now() >= mem.retryAt) {
       const batch = mem.pending.slice(0, 20);
       try {
         const res = await memwal().rememberBulk(batch.map((r) => ({ text: encode(r) })));
@@ -164,24 +204,24 @@ export function flush(): Promise<void> {
         mem.records.push(...batch);
       } catch (e) {
         const wait = e instanceof MemWalRateLimitedError ? (e.retryAfterSeconds ?? 10) : 15;
-        retryAt = Date.now() + wait * 1000;
+        mem.retryAt = Date.now() + wait * 1000;
         console.warn(`[memory] write failed, ${mem.pending.length} queued, retry in ${wait}s:`, (e as Error).message);
         break;
       }
     }
-  })().finally(() => { flushing = null; saveQueue(); });
-  return flushing;
+  })().finally(() => { mem.flushing = null; saveQueue(); });
+  return mem.flushing;
 }
 
-export const jobIds = () => [...mem.jobs];
+export const jobIds = () => [...store().jobs];
 
 /** Proof for the README: how many memories exist in the account, with blob IDs. */
 export async function proof() {
-  if (MOCK) return { count: mem.mock.length, blobs: [] as string[], mock: true };
+  if (MOCK) return { count: store().mock.length, blobs: [] as string[], mock: true };
   let cursor: string | undefined;
   const blobs: string[] = [];
   do {
-    const page = await memwal().listMemories({ cursor, limit: 500, namespace: env.memwalNamespace });
+    const page = await memwal().listMemories({ cursor, limit: 500, namespace: namespace() });
     blobs.push(...page.memories.map((m) => m.blob_id));
     cursor = page.has_more ? (page.next_cursor ?? undefined) : undefined;
   } while (cursor);
@@ -191,4 +231,4 @@ export async function proof() {
 export const health = () => (MOCK ? Promise.resolve({ status: "mock" }) : memwal().health());
 
 /** Restore the relayer index from Walrus blobs (used on a fresh setup). */
-export const restore = (limit = 50) => (MOCK ? Promise.resolve(null) : memwal().restore(env.memwalNamespace, limit));
+export const restore = (limit = 50) => (MOCK ? Promise.resolve(null) : memwal().restore(namespace(), limit));

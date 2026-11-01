@@ -96,6 +96,13 @@ describe('Usual core flows (mock mode)', { serial: true }, () => {
     await app.open('/');
   });
 
+  test('open questions are answered from memory', async ({ screen }) => {
+    await say(screen, 'remember that the rent is due on the first');
+    await expect(screen.getByTestId('say')).toContainText('Noted');
+    await say(screen, 'when is the rent due?');
+    await expect(screen.getByTestId('say')).toContainText('first');
+  });
+
   test('memory off: Usual forgets Mum', async ({ screen }) => {
     await screen.getByRole('button', 'Settings').tap();
     await screen.getByRole('button', 'Memory: on').tap();
@@ -150,5 +157,12 @@ describe('safety and learning on a phone', { serial: true }, () => {
     await expect(screen.getByText('usually 50 USDC')).toBeVisible();
     await expect(screen.getByText('100 USDC a week')).toBeVisible();
     await screen.getByRole('button', 'Close settings').tap();
+  });
+
+  test('what you said about someone stops the agent paying them', async ({ screen }) => {
+    await say(screen, 'remember not to pay Mum until she confirms');
+    await say(screen, 'Send Mum her usual');
+    await expect(screen.getByTestId('say')).toContainText('You told me');
+    await expect(screen.getByRole('button', 'Approve with wallet')).toBeVisible();
   });
 });

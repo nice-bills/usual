@@ -16,7 +16,7 @@ if (!p.ok) throw new Error(p.say);
 console.log("owner pay:", JSON.stringify(await afterSigned("pay", p.bytes, await sign(p.bytes), {})));
 
 const over = await payCafe("flat-white", undefined);
-console.log("café over limit:", over.say, !!over.needsOwner);
+console.log("café over limit:", over.say, "needsOwner" in over);
 const q = await cafeQuote("flat-white", origin);
 const shot = await oneShotBytes(q.label, q.amount);
 console.log("one-shot:", JSON.stringify(await afterSigned("cafe", shot, await sign(shot), { item: "flat-white" })).slice(0, 200));

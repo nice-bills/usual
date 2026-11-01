@@ -11,8 +11,9 @@ const records: Stamped[] = [
 const preview = vi.fn();
 
 vi.mock("./env", () => ({ MOCK: true, USDC_DECIMALS: 6, env: { symbol: "USDC" } }));
-vi.mock("./parse", () => ({ notAName: () => false, parse: async () => ({ action: { kind: "pay", to: "Mum" }, by: "rules" }) }));
-vi.mock("./memory", () => ({ load: async () => ({ state: reduce(records), records, source: "mock", pending: 0 }), remember: async (r: unknown[]) => ({ stored: r, queued: 0 }), memoryOn: () => true }));
+const recalled = vi.hoisted(() => vi.fn<(q: string) => Promise<string[]>>(async () => []));
+vi.mock("./parse", () => ({ answerFrom: async (_q: string, m: string[]) => m[0], notAName: () => false, parse: async () => ({ action: { kind: "pay", to: "Mum" }, by: "rules" }) }));
+vi.mock("./memory", () => ({ load: async () => ({ state: reduce(records), records, source: "mock", pending: 0 }), remember: async (r: unknown[]) => ({ stored: r, queued: 0 }), memoryOn: () => true, recallAbout: async (q: string) => recalled(q) }));
 vi.mock("./wallet", () => ({
   preview: (...a: unknown[]) => preview(...a),
   balance: async () => 400_000_000n,
@@ -39,6 +40,31 @@ describe("chain refusal", () => {
     const r = await talk("Send Mum her usual", {});
     expect(r.proposal).toMatchObject({ type: "pay", path: "owner", overLimit: "over what the agent can spend" });
     expect(r.say).toContain("needs your signature");
+  });
+});
+
+describe("memory changes what Usual does", () => {
+  beforeEach(() => {
+    preview.mockReset();
+    preview.mockImplementation(async (_to: string, _amount: bigint, allowanceId?: string) => ({ path: allowanceId ? "agent" : "owner", ok: true, error: null, balanceAfter: 350_000_000n, simulated: true }));
+  });
+
+  it("something said about a person takes the agent's hands off, even inside the limit", async () => {
+    records.push({ type: "CORRECTION", note: "Don't pay Mum until she confirms the new number", v: 99 });
+    const r = await talk("Send Mum her usual", {});
+    records.pop();
+    expect(r.proposal).toMatchObject({ type: "pay", path: "owner" });
+    expect(r.say).toContain("You told me: “Don't pay Mum");
+  });
+
+  it("answers open questions only from what memory recalls", async () => {
+    recalled.mockResolvedValueOnce(["Correction from the user: rent is due on the first."]);
+    expect((await act({ kind: "unknown" }, { text: "when is rent due?" })).say).toContain("rent is due on the first");
+  });
+
+  it("admits it doesn't know when memory has nothing", async () => {
+    recalled.mockResolvedValueOnce([]);
+    expect((await act({ kind: "unknown" }, { text: "what's my blood type?" })).say).toContain("don't have anything");
   });
 });
 

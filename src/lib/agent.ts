@@ -2,9 +2,9 @@
 // Walrus Memory says and what the limits allow before any money moves.
 import { env } from "./env";
 import { checkLimit, inferRecurring, suggestLimit, validateIntent, type ChainPayment, type Recurring } from "./insights";
-import { load, memoryOn, remember } from "./memory";
+import { load, memoryOn, recallAbout, remember } from "./memory";
 import { formatAmount, formatBalance, parseAmount, shortAddr } from "./money";
-import { notAName, parse, type Action } from "./parse";
+import { answerFrom, notAName, parse, type Action } from "./parse";
 import { categoryFor, nameForAddress, reduce, resolveContact, type Category, type Rec, type Stamped, type State } from "./records";
 import * as wallet from "./wallet";
 
@@ -50,12 +50,14 @@ export function questionsFrom(history: ChainPayment[], s: State, skip: string[] 
 }
 
 export async function snapshot(fresh = false, skip: string[] = []) {
-  const [mem, bal, hist] = await Promise.all([load(fresh), wallet.balance(), wallet.history()]);
+  const [mem, bal, hist, loose] = await Promise.all([load(fresh), wallet.balance(), wallet.history(), wallet.looseBalance()]);
   return {
     owner: wallet.owner(),
     memoryOn: memoryOn(),
     symbol: env.symbol,
     balance: formatBalance(bal),
+    // Arrived but not yet where limits can spend it.
+    loose: loose ? formatAmount(loose) : null,
     memory: { count: mem.records.length, source: mem.source, pending: mem.pending, error: mem.error },
     state: mem.state,
     questions: questionsFrom(hist, mem.state, skip),
@@ -64,7 +66,7 @@ export async function snapshot(fresh = false, skip: string[] = []) {
   };
 }
 
-export type TalkContext = { asking?: Question | null; followUp?: Action | null; skip?: string[] };
+export type TalkContext = { asking?: Question | null; followUp?: Action | null; skip?: string[]; text?: string };
 
 export async function talk(text: string, ctx: TalkContext): Promise<Reply> {
   const mem = await load();
@@ -74,7 +76,7 @@ export async function talk(text: string, ctx: TalkContext): Promise<Reply> {
     ? { action: ctx.followUp, by: "rules" as const }
     : await parse(text, { asking: ctx.asking, contacts: Object.values(s.contacts).map((c) => c.name) });
   const base = { heard: text, by, action, remembered: 0, memoryError: mem.error };
-  const out = await run(action, s, ctx);
+  const out = await run(action, s, { ...ctx, text });
   return { ...base, ...out };
 }
 
@@ -156,8 +158,15 @@ async function run(a: Action, s: State, ctx: TalkContext): Promise<Out> {
       return { say: "Noted. I'll remember that.", remembered: n };
     }
     default:
-      return { say: (a.kind === "unknown" && a.say) || "Try “Send Mum her usual” or “What am I wasting money on?”", remembered: 0 };
+      return ask(a.kind === "unknown" ? a.say : undefined, ctx.text);
   }
+}
+
+/** Anything that isn't a command goes to memory: Walrus recalls by meaning, and the reply can only use what came back. */
+async function ask(llmSay: string | undefined, text?: string): Promise<Out> {
+  const memories = text ? await recallAbout(text) : [];
+  const say = memories.length ? await answerFrom(text!, memories) : null;
+  return { say: say ?? llmSay ?? "I don't have anything on that yet. Tell me and I'll remember.", remembered: 0 };
 }
 
 async function name(a: Extract<Action, { kind: "name" }>, s: State, ctx: TalkContext): Promise<Out> {
@@ -217,7 +226,10 @@ async function pay(a: Extract<Action, { kind: "pay" }>, s: State): Promise<Out> 
   const { plan } = v;
   const short = plan.amount - (await wallet.balance());
   if (short > 0n) return { say: `That's ${formatAmount(short)} ${env.symbol} more than you have.`, remembered: 0 };
-  const allowanceId = plan.limit.ok && !plan.guard ? plan.limit.allowanceId : undefined;
+  // Something the user told Usual about this person outranks every limit.
+  const warned = (await load()).records.find((r) => r.type === "CORRECTION" && new RegExp(`\\b${plan.contact.name}\\b`, "i").test(r.note));
+  const said = warned?.type === "CORRECTION" ? warned.note : null;
+  const allowanceId = plan.limit.ok && !plan.guard && !said ? plan.limit.allowanceId : undefined;
   let p = await wallet.preview(plan.contact.address, plan.amount, allowanceId);
   // The chain is the real enforcer. If it refuses the agent, the owner can still pay.
   const refused = !p.ok && p.path === "agent";
@@ -226,7 +238,7 @@ async function pay(a: Extract<Action, { kind: "pay" }>, s: State): Promise<Out> 
   const n = await write([{ type: "MENTION", name: plan.contact.name, at: Date.now() }]);
   const understood = `${plan.amountText} ${env.symbol} to ${plan.contact.name} (${shortAddr(plan.contact.address)})${plan.reason ? `, ${plan.reason}` : ""} · balance after: ${formatBalance(p.balanceAfter)}`;
   return {
-    say: overLimit ? `${plan.guard && plan.limit.ok && !refused ? plan.guard : `That's ${overLimit}`}, so it needs your signature.` : p.path === "owner" ? "Sign to send it." : `Sending ${plan.contact.name} ${plan.amountText}.`,
+    say: said ? `You told me: “${said}” So this one needs your signature.` : overLimit ? `${plan.guard && plan.limit.ok && !refused ? plan.guard : `That's ${overLimit}`}, so it needs your signature.` : p.path === "owner" ? "Sign to send it." : `Sending ${plan.contact.name} ${plan.amountText}.`,
     understood,
     proposal: { type: "pay", to: plan.contact.name, name: plan.contact.name, address: plan.contact.address, amount: plan.amountText, category: plan.category, path: p.path, balanceAfter: formatBalance(p.balanceAfter), simulated: p.simulated, reason: plan.reason, overLimit },
     remembered: n,
@@ -299,6 +311,7 @@ export async function confirmPay(to: string, amount?: string) {
   if (!plan.limit.ok || !plan.limit.allowanceId || plan.guard) {
     return { ok: false as const, say: "This needs your signature.", needsOwner: await wallet.ownerPayBytes(plan.contact.address, plan.amount) };
   }
+  if (wallet.onDevice()) return { ok: true as const, agentBytes: await wallet.agentPayBytes(plan.contact.address, plan.amount, plan.limit.allowanceId) };
   const r = await wallet.agentPay(plan.contact.address, plan.amount, plan.limit.allowanceId);
   return { ok: true as const, ...(await recordPayment(s, plan.contact.address, plan.amount, r.digest, "agent")) };
 }
@@ -332,15 +345,22 @@ export async function recordPayment(s: State, address: string, amount: bigint, d
 }
 
 /** Owner signed something: a payment, a new limit, or a one-shot café approval. */
-export async function afterSigned(kind: "pay" | "limit" | "cafe", bytes: string, signature: string, meta: { category?: Category; amount?: string; periodDays?: number; item?: string }) {
+export async function afterSigned(kind: "pay" | "agent-pay" | "limit" | "cafe" | "starter" | "seed" | "deposit", bytes: string, signature: string, meta: { category?: Category; amount?: string; periodDays?: number; item?: string }) {
   const { state: s } = await load();
+  const before = kind === "deposit" ? await wallet.looseBalance() : 0n;
   const r = await wallet.submitSigned(bytes, signature);
-  if (kind === "pay") {
+  if (kind === "pay" || kind === "agent-pay") {
     if (!r.payment) return { ok: true, digest: r.digest, say: "Done." };
-    return { ok: true, ...(await recordPayment(s, r.payment.to, r.payment.amount, r.digest, "owner")) };
+    return { ok: true, ...(await recordPayment(s, r.payment.to, r.payment.amount, r.digest, kind === "pay" ? "owner" : "agent")) };
+  }
+  if (kind === "seed") return { ok: true, digest: r.digest, say: "" };
+  if (kind === "deposit") {
+    await remember([{ type: "DEPOSIT", amount: formatAmount(before), digest: r.digest, at: Date.now() }]);
+    return { ok: true, digest: r.digest, say: `${formatAmount(before)} ${env.symbol} is ready to spend.` };
   }
   const allowanceId = r.allowances[0];
   if (!allowanceId) return { ok: false, digest: r.digest, say: "Signed, but no allowance was created." };
+  if (kind === "starter") return { ok: true, digest: r.digest, allowanceId, say: "" };
   if (kind === "limit") {
     const amount = parseAmount(meta.amount ?? "");
     if (!meta.category || amount == null || !meta.periodDays) return { ok: false, digest: r.digest, say: "Missing limit details." };
@@ -361,10 +381,22 @@ export async function payCafe(item: string, allowanceId: string | undefined, s?:
     if (!lim.ok || !lim.allowanceId) return { ok: false, say: "Over the food limit: needs your signature.", needsOwner: await wallet.oneShotBytes(q.label, q.amount) };
     id = lim.allowanceId;
   }
+  if (wallet.onDevice()) return { ok: true, agentCafe: await wallet.cafePrepare(item, origin, id, q.amount) };
   const r = await wallet.cafePay(item, origin, id, q.amount);
+  return recordCafe(q, r, allowanceId ? "owner" : "mpp");
+}
+
+/** The device signed: settle the café payment and remember it. */
+export async function finishCafe(item: string, challenge: string, bytes: string, signature: string, proofSignature: string) {
+  const origin = process.env.PUBLIC_ORIGIN ?? "http://localhost:3000";
+  const q = await wallet.cafeQuote(item, origin);
+  return recordCafe(q, await wallet.cafeSettle(item, origin, challenge, bytes, signature, proofSignature), "mpp");
+}
+
+async function recordCafe(q: Awaited<ReturnType<typeof wallet.cafeQuote>>, r: { digest: string; receipt?: string | null }, via: "owner" | "mpp") {
   await remember([
     { type: "CATEGORY", address: q.recipient, category: "food" },
-    { type: "PAYMENT", to: q.recipient, name: "Café", amount: formatAmount(q.amount), digest: r.digest, category: "food", at: Date.now(), via: allowanceId ? "owner" : "mpp" },
+    { type: "PAYMENT", to: q.recipient, name: "Café", amount: formatAmount(q.amount), digest: r.digest, category: "food", at: Date.now(), via },
   ]);
   return { ok: true, digest: r.digest, receipt: r.receipt, say: `Paid the café ${formatAmount(q.amount)}. Enjoy your ${q.label.toLowerCase()}.` };
 }

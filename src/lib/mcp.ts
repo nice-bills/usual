@@ -55,8 +55,8 @@ const TOOLS: { name: string; description: string; inputSchema: unknown; annotati
     annotations: { destructiveHint: true },
     call: async ({ to, amount }) => {
       const r = await confirmPay(to!, amount);
-      if (r.ok) return { sent: true, say: r.say, digest: r.digest };
-      return { sent: false, say: "needsOwner" in r ? "This needs the owner's wallet signature. Finish it in the Usual app." : r.say };
+      if (r.ok && "digest" in r) return { sent: true, say: r.say, digest: r.digest };
+      return { sent: false, say: ("say" in r && !("needsOwner" in r) && r.say) || "This needs the owner's wallet signature. Finish it in the Usual app." };
     },
   },
   {

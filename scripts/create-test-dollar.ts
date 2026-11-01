@@ -1,6 +1,7 @@
 // Devnet has no USDC and the testnet faucets need a captcha. This publishes "Usual Test Dollar" (TUSD,
-// 6 decimals) on devnet from the standard coin template, mints test dollars to the demo owner, funds the
-// agent with devnet SUI for gas, and points .env at devnet + TUSD. Run: pnpm devnet:setup
+// 6 decimals) from the standard coin template.
+// Devnet (pnpm devnet:setup): mints to the demo owner, funds gas, points .env at devnet + TUSD.
+// Testnet (pnpm testnet:setup): writes .env.public for the public deployment, which mints for each new wallet.
 import { readFileSync, writeFileSync } from "node:fs";
 import { bcs } from "@mysten/sui/bcs";
 import { getFaucetHost, requestSuiFromFaucetV2 } from "@mysten/sui/faucet";
@@ -12,11 +13,12 @@ import { agent, ownerAddress, sui } from "../src/lib/chain";
 import { env } from "../src/lib/env";
 import { COIN_TEMPLATE_HEX } from "./coin-template";
 
-if (env.network !== "devnet") throw new Error("run with SUI_NETWORK=devnet (the package script sets it)");
+const devnet = env.network === "devnet";
+if (!devnet && env.network !== "testnet") throw new Error("test dollars are for devnet or testnet only");
 const owner = Ed25519Keypair.fromSecretKey(env.ownerKey);
 const me = ownerAddress();
 
-for (const addr of [me, agent().toSuiAddress()]) {
+for (const addr of devnet ? [me, agent().toSuiAddress()] : []) {
   const r = await requestSuiFromFaucetV2({ host: getFaucetHost("devnet"), recipient: addr }).catch((e) => ({ status: String(e) }));
   console.log(`faucet ${addr.slice(0, 10)}…: ${typeof r.status === "string" ? r.status : JSON.stringify(r.status)}`);
 }
@@ -25,7 +27,7 @@ let bytes = template.update_identifiers(fromHex(COIN_TEMPLATE_HEX), { TEMPLATE: 
 const str = (s: string) => bcs.string().serialize(s).toBytes();
 bytes = template.update_constants(bytes, str("TUSD"), str("TMPL"), "Vector(U8)");
 bytes = template.update_constants(bytes, str("Usual Test Dollar"), str("Template Coin"), "Vector(U8)");
-bytes = template.update_constants(bytes, str("Test dollar for the Usual demo on Sui devnet. No value."), str("Template Coin Description"), "Vector(U8)");
+bytes = template.update_constants(bytes, str("Test dollar for the Usual demo. No value."), str("Template Coin Description"), "Vector(U8)");
 
 const pub = new Transaction();
 pub.setSender(me);
@@ -40,6 +42,15 @@ const treasury = Object.entries(types).find(([, ty]) => ty.includes("::coin::Tre
 if (!treasury) throw new Error("no TreasuryCap in publish effects");
 const coinType = treasury[1].match(/TreasuryCap<(.+)>$/)![1];
 console.log(`published ${coinType} (${t.digest})`);
+
+if (!devnet) {
+  const drop = /^(USUAL_MOCK|MCP_TOKEN|DEMO_SCALE|PAYEE_[A-Z]+_PRIVATE_KEY|PUBLIC_ORIGIN|USDC_TYPE|CURRENCY_SYMBOL|TUSD_TREASURY_CAP)=/;
+  const base = readFileSync(".env", "utf8").split("\n").filter((l) => !drop.test(l));
+  const extra = [`USDC_TYPE=${coinType}`, "CURRENCY_SYMBOL=TUSD", `TUSD_TREASURY_CAP=${treasury[0]}`, "PUBLIC_ORIGIN=https://usual-live.onrender.com", "USUAL_MOCK=0", "USUAL_TRACE=stdout"];
+  writeFileSync(".env.public", `${[...base, ...extra].join("\n").trim()}\n`, { mode: 0o600 });
+  console.log(".env.public written");
+  process.exit(0);
+}
 
 const mint = new Transaction();
 mint.setSender(me);

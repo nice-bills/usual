@@ -5,7 +5,8 @@ import { InMemoryDigestStore, sui as suiServer } from "@suimpp/mpp/server";
 import { suiCharge } from "@suimpp/mpp/client";
 import { Challenge, Credential, Method } from "mppx";
 import { Mppx } from "mppx/server";
-import { agent, executeAndConfirm, transferTx } from "./chain";
+import { TransactionDataBuilder } from "@mysten/sui/transactions";
+import { agent, buildForOwner, executeAndConfirm, transferTx } from "./chain";
 import { env } from "./env";
 import { formatAmount, parseAmount } from "./money";
 
@@ -44,6 +45,28 @@ export async function quote(url: string) {
   const amount = parseAmount(challenge.request.amount);
   if (amount == null) throw new Error("bad amount in challenge");
   return { amount, recipient: challenge.request.recipient as string, currency: challenge.request.currency as string };
+}
+
+/** Device path, step 1: read the 402 and build what the device must sign. The digest is known before it lands. */
+export async function prepareAllowancePayment(url: string, allowance: { objectId: string; funder: string }, sender: string, maxAmount: bigint) {
+  const res = await fetch(url);
+  if (res.status !== 402) throw new Error(`expected 402, got ${res.status}`);
+  const challenge = Challenge.fromResponse(res, { methods: [suiCharge] });
+  if (challenge.request.currency !== currency.type) throw new Error(`unsupported currency ${challenge.request.currency}`);
+  const amount = parseAmount(challenge.request.amount);
+  if (amount == null || amount > maxAmount) throw new Error(`merchant asked ${challenge.request.amount}, approved ${formatAmount(maxAmount)}`);
+  const bytes = await buildForOwner(transferTx({ sender, to: challenge.request.recipient, amount, allowance }));
+  const digest = TransactionDataBuilder.getDigestFromBytes(Buffer.from(bytes, "base64"));
+  return { bytes, proof: Buffer.from(proofBytes(challenge, digest)).toString("base64"), challenge: JSON.stringify(challenge) };
+}
+
+/** Device path, step 2: land the signed payment, then present the signed proof to the merchant. */
+export async function settleAllowancePayment(url: string, challengeJson: string, bytes: string, signature: string, proofSignature: string) {
+  const { digest } = await executeAndConfirm({ bytes: Buffer.from(bytes, "base64"), signature });
+  const credential = Credential.serialize({ challenge: JSON.parse(challengeJson), payload: { digest, signature: proofSignature } });
+  const res = await fetch(url, { headers: { authorization: credential } });
+  if (!res.ok) throw new Error(`café refused payment: ${res.status} ${await res.text()}`);
+  return { digest, receipt: res.headers.get("payment-receipt"), body: await res.json() };
 }
 
 /** Pay a 402 endpoint with the agent key, drawing from `allowanceId` on the owner's balance. */

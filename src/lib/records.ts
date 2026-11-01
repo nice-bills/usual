@@ -15,7 +15,8 @@ export type Rec =
   | { type: "CORRECTION"; note: string }
   | { type: "PREFERENCE"; key: string; value: string }
   | { type: "CATEGORY"; address: string; category: Category }
-  | { type: "MENTION"; name: string; at: number };
+  | { type: "MENTION"; name: string; at: number }
+  | { type: "DEPOSIT"; amount: string; digest: string; at: number };
 
 export type Stamped = Rec & { v: number };
 
@@ -25,6 +26,7 @@ export function keyOf(r: Rec): string {
     case "LIMIT": return `LIMIT:${r.category}`;
     case "SUBSCRIPTION": case "CATEGORY": return `${r.type}:${r.address}`;
     case "PAYMENT": return `PAYMENT:${r.digest}`;
+    case "DEPOSIT": return `DEPOSIT:${r.digest}`;
     case "PREFERENCE": return `PREFERENCE:${r.key}`;
     case "CORRECTION": return `CORRECTION:${r.note}`;
   }
@@ -41,6 +43,7 @@ export function sentence(r: Rec): string {
     case "PREFERENCE": return `Preference: ${r.key} is ${r.value}.`;
     case "CATEGORY": return `Spending category: payments to ${r.address} count as ${r.category}.`;
     case "MENTION": return `Mention: the user talked about ${r.name}.`;
+    case "DEPOSIT": return `Deposit: the user added ${r.amount} ${env.symbol} to their balance.`;
   }
 }
 

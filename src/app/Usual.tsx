@@ -6,13 +6,16 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import type { Proposal, Question, Reply } from "@/lib/agent";
 import type { Action } from "@/lib/parse";
 import type { Rec as MemoryRecord, State } from "@/lib/records";
+import { fromBase64 } from "@mysten/sui/utils";
 import type { WalletApi } from "./Wallet";
+import { AddMoney } from "./AddMoney";
 
 const Wallet = dynamic(() => import("./Wallet"), { ssr: false });
 
 type Health = { mock: boolean; network: string; tatum: boolean; walrusMemory: boolean; llm: string };
-type Snapshot = { owner: string; memoryOn: boolean; symbol: string; balance: string; state: State; activity: { name: string; amount: string; digest: string }[]; memory: { count: number; source: string; pending: number; error?: string }; questions: Question[] };
-type Outcome = { say: string; digest?: string; needsOwner?: string; bytes?: string; ok?: boolean; followUp?: Action };
+type Snapshot = { owner: string; memoryOn: boolean; symbol: string; balance: string; loose: string | null; state: State; activity: { name: string; amount: string; digest: string }[]; memory: { count: number; source: string; pending: number; error?: string }; questions: Question[] };
+type CafeSigning = { bytes: string; proof: string; challenge: string };
+type Outcome = { say: string; digest?: string; needsOwner?: string; bytes?: string; agentBytes?: string; agentCafe?: CafeSigning; allowanceId?: string; ok?: boolean; followUp?: Action };
 
 const AUTO_PAY_MS = 3000;
 const HOLD_MS = 500;
@@ -212,14 +215,14 @@ export default function Usual({ health }: { health: Health }) {
 
   // Owner proves control of the wallet once; the server then accepts this browser.
   useEffect(() => {
-    if (health.mock || !account || !wallet || authed || signingIn.current) return;
+    if (health.mock || !account || !wallet?.agent || authed || signingIn.current) return;
     signingIn.current = true;
     (async () => {
-      const a = await api<{ message: string; at: number; owner: string; session: boolean }>(`auth?address=${account}`);
-      if (a.owner !== account) return setError(`This isn't the owner wallet. Connect ${a.owner.slice(0, 6)}…${a.owner.slice(-4)}.`);
+      const agent = wallet.agent!.toSuiAddress();
+      const a = await api<{ message: string; at: number; session: boolean }>(`auth?address=${account}&agent=${agent}`);
       if (a.session) return setAuthed(true);
       const { signature } = await wallet.signMessage({ message: new TextEncoder().encode(a.message) });
-      await api("auth", { address: account, at: a.at, signature });
+      await api("auth", { address: account, agent, at: a.at, signature });
       setError("");
       setAuthed(true);
     })().catch((e) => setError(e.message)).finally(() => { signingIn.current = false; });
@@ -243,7 +246,7 @@ export default function Usual({ health }: { health: Health }) {
   useEffect(() => { if (ready) firstLoad(); }, [ready, firstLoad]);
 
   /** Owner signature path: server builds and validates, wallet signs, server executes through Tatum. */
-  const signAndSubmit = useCallback(async (kind: "pay" | "limit" | "cafe", bytes: string, meta: Record<string, unknown> = {}) => {
+  const signAndSubmit = useCallback(async (kind: "pay" | "limit" | "cafe" | "starter" | "deposit", bytes: string, meta: Record<string, unknown> = {}) => {
     let signed = { bytes, signature: "mock" };
     if (!health.mock) {
       setBusy("Waiting for your wallet…");
@@ -252,6 +255,53 @@ export default function Usual({ health }: { health: Health }) {
     setBusy("Sending…");
     return api<Outcome>("submit", { kind, bytes: signed.bytes, signature: signed.signature, meta });
   }, [health, wallet]);
+
+  /** Inside a limit no popup appears: the agent key on this device signs, and the server never can. */
+  const signAsAgent = useCallback(async (kind: "agent-pay" | "seed", bytes: string) => {
+    const signed = await wallet!.agent!.signTransaction(fromBase64(bytes));
+    return api<Outcome>("submit", { kind, bytes: signed.bytes, signature: signed.signature });
+  }, [wallet]);
+
+  const payCafeOnDevice = useCallback(async (s: CafeSigning, item: string) => {
+    const agent = wallet!.agent!;
+    const [tx, proof] = await Promise.all([agent.signTransaction(fromBase64(s.bytes)), agent.signPersonalMessage(fromBase64(s.proof))]);
+    return api<Outcome>("cafe/finish", { item, challenge: s.challenge, bytes: tx.bytes, signature: tx.signature, proofSignature: proof.signature });
+  }, [wallet]);
+
+  /** New wallet: test money and gas from the server, one approval, then the device key lays down sample history. */
+  const getStarted = useCallback(async () => {
+    setError("");
+    setBusy("Getting your test money…");
+    try {
+      const { bytes } = await api<{ bytes: string }>("faucet", {});
+      const r = await signAndSubmit("starter", bytes);
+      if (r.ok === false || !r.allowanceId) throw new Error(r.say || "That approval didn't go through.");
+      setBusy("Adding sample payments…");
+      for (let round = 0; round < 3; round++) {
+        const next = await api<{ bytes: string }>("seed", { allowanceId: r.allowanceId, round });
+        await signAsAgent("seed", next.bytes);
+      }
+      firstLoad();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy("");
+    }
+  }, [signAndSubmit, signAsAgent, firstLoad]);
+
+  const addDeposit = useCallback(async () => {
+    setError("");
+    try {
+      const { bytes } = await api<{ bytes: string }>("deposit", {});
+      const r = await signAndSubmit("deposit", bytes);
+      setHint(r.say);
+      await refresh();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy("");
+    }
+  }, [signAndSubmit, refresh]);
 
   const execute = useCallback(async (p: Proposal) => {
     if (running.current) return;
@@ -264,7 +314,8 @@ export default function Usual({ health }: { health: Health }) {
       if (p.type === "pay") {
         r = await api("pay", { to: p.to, amount: p.amount, path: p.path });
         const bytes = r.needsOwner ?? r.bytes;
-        if (bytes) r = await signAndSubmit("pay", bytes);
+        if (r.agentBytes) r = await signAsAgent("agent-pay", r.agentBytes);
+        else if (bytes) r = await signAndSubmit("pay", bytes);
         else if (r.ok === false) throw new Error(r.say);
       } else if (p.type === "limit") {
         const { bytes } = await api<{ bytes: string }>("limit", { category: p.category, amount: p.amount, periodDays: p.periodDays });
@@ -272,6 +323,7 @@ export default function Usual({ health }: { health: Health }) {
       } else {
         r = await api("cafe/pay", { item: p.item, path: p.path });
         if (r.needsOwner) r = await signAndSubmit("cafe", r.needsOwner, { item: p.item });
+        if (r.agentCafe) r = await payCafeOnDevice(r.agentCafe, p.item);
       }
       // A payment ends as one check mark, then the screen returns to just the balance.
       setReply(null);
@@ -293,7 +345,7 @@ export default function Usual({ health }: { health: Health }) {
       running.current = false;
       setBusy("");
     }
-  }, [refresh, signAndSubmit, speak, keepListening]);
+  }, [refresh, signAndSubmit, signAsAgent, payCafeOnDevice, speak, keepListening]);
 
   /** Puts memory back as it was before the last change. Money that moved stays moved. */
   const revert = useCallback(async () => {
@@ -642,6 +694,7 @@ export default function Usual({ health }: { health: Health }) {
         }) : <p className="fine">Nothing sent yet.</p>}
 
         <h2>Voice</h2>
+        {!health.mock && snap && <AddMoney address={snap.owner} symbol={snap.symbol} network={health.network} />}
         <button className="row-button" aria-pressed={voiceOn} onClick={() => {
           const next = !voiceOn;
           setVoiceOn(next);
@@ -747,7 +800,13 @@ export default function Usual({ health }: { health: Health }) {
           {loadError && <p className="problem" role="alert">I couldn&apos;t load your wallet. <button className="link" onClick={firstLoad}>Try again</button></p>}
           {ready && !snap && !loadError && <p className="say">Reading your memory…</p>}
           {!ready && <p className="say">{account ? "Sign the message in your wallet." : "Connect your wallet to start."}</p>}
-          {idle && snap && !snap.memory.error && <p className="say">{firstName ? `Try “Send ${firstName} the usual”` : "Tap to talk"}</p>}
+          {!health.mock && health.network !== "mainnet" && snap && !snap.activity.length && !snap.loose && !busy && !heard && (
+            <p className="say">This is Sui testnet, so the money is pretend. <button className="link" onClick={getStarted}>Get 1,000 test dollars</button></p>
+          )}
+          {snap?.loose && !busy && (
+            <p className="say">{snap.loose} {snap.symbol} arrived. <button className="link" onClick={addDeposit}>Add it to Usual</button></p>
+          )}
+          {idle && snap && snap.activity.length > 0 && !snap.memory.error && <p className="say">{firstName ? `Try “Send ${firstName} the usual”` : "Tap to talk"}</p>}
         </div>
         {ready ? (
           <>
@@ -762,7 +821,7 @@ export default function Usual({ health }: { health: Health }) {
             )}
           </>
         ) : null}
-        {!health.mock && <Wallet onChange={setWallet} show={!ready} />}
+        {!health.mock && <Wallet onChange={setWallet} show={!ready} network={health.network} />}
       </footer>
     </main>
   );

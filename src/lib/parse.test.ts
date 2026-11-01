@@ -49,3 +49,10 @@ describe("parseRules", () => {
     expect(parseRules("that's my mother", asking)).toMatchObject({ kind: "name", name: "Mother", relation: "mother" });
   });
 });
+
+describe("a question is never a name", () => {
+  const asking = { address: "0x1", text: "Who's that?", count: 3, usual: "50" };
+  it.each(["when is the rent due?", "when is the rent due", "did I pay the gym", "why is it so high"])("%s", (text) => {
+    expect(parseRules(text, { asking, contacts: [] }).kind).not.toBe("name");
+  });
+});

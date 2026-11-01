@@ -16,6 +16,8 @@ export const env = {
   // Shrinks seeded history, limits and café prices to fit faucet-sized balances (0.05: Mum's usual is 2.50).
   scale: MOCK ? 1 : Number(process.env.DEMO_SCALE ?? 1),
   cafe: process.env.CAFE_RECIPIENT_ADDRESS ?? "",
+  // Mints test dollars for new wallets. Set only on the public testnet deployment.
+  treasuryCap: process.env.TUSD_TREASURY_CAP ?? "",
   // Secret in the connector URL. Empty on a live deployment means the connector stays off.
   mcpToken: process.env.MCP_TOKEN ?? (MOCK ? "demo" : ""),
   owner: process.env.OWNER_ADDRESS ?? "",

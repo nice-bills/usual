@@ -8,6 +8,7 @@ import { Ed25519Keypair } from "@mysten/sui/keypairs/ed25519";
 import { Transaction } from "@mysten/sui/transactions";
 import { env } from "./env";
 import type { ChainPayment } from "./insights";
+import { currentUser, deviceAgent } from "./user";
 
 // Tatum's free plan allows ~3 req/s and building one transaction fires several calls, so every unary
 // call takes a turn (≤2.5/s) and a 429 retries with backoff instead of failing the payment.
@@ -52,6 +53,8 @@ export function sui(): SuiGrpcClient {
 }
 
 export const agent = () => Ed25519Keypair.fromSecretKey(env.agentKey);
+/** The spender on this user's allowances: their device key, or the server key for scripts and the connector. */
+export const agentAddress = () => deviceAgent() ?? agent().toSuiAddress();
 
 // Cache reads briefly. The transport already does the rate limiting.
 const memo = new Map<string, { at: number; value: Promise<unknown> }>();
@@ -78,10 +81,11 @@ let earliest: bigint | undefined;
 
 
 /** Outgoing USDC payments sent by `address`, newest first, read through Tatum. */
-export function outgoingPayments(address: string, limit = 200, spender = env.agentKey ? agent().toSuiAddress() : address): Promise<ChainPayment[]> {
+export function outgoingPayments(address: string, limit = 200, spender = deviceAgent() ?? (env.agentKey ? agent().toSuiAddress() : address)): Promise<ChainPayment[]> {
   return paced(`hist:${address}`, async () => {
     for (let attempt = 0; ; attempt++) {
       try {
+        await turn(); // A stream, so the paced transport doesn't cover it.
         const call = sui().ledgerService.listTransactions({
           readMask: { paths: ["digest", "balance_changes", "timestamp"] },
           startCheckpoint: earliest,
@@ -103,9 +107,11 @@ export function outgoingPayments(address: string, limit = 200, spender = env.age
         }
         return out;
       } catch (e) {
-        const low = String((e as Error).message).match(/lowest available checkpoint is (\d+)/);
-        if (!low || attempt > 1) throw e;
-        earliest = BigInt(low[1]) + 1n;
+        const message = String((e as Error).message);
+        const low = message.match(/lowest available checkpoint is (\d+)/);
+        if (low && attempt < 2) earliest = BigInt(low[1]) + 1n;
+        else if (/429|UNAVAILABLE/.test(message + String((e as { code?: string }).code)) && attempt < 5) await sleep(800 * 2 ** attempt);
+        else throw e;
       }
     }
   }, 30_000);
@@ -128,11 +134,19 @@ export async function simulate(tx: Transaction, owner: string) {
   return { ok: r.$kind === "Transaction" && t.status.success, error: t.status.success ? null : String(t.status.error?.message ?? "simulation failed"), delta };
 }
 
+// Testers share the agent key. Two concurrent spends of its gas coin can lock that coin until the epoch ends.
+let line: Promise<unknown> = Promise.resolve();
+export function oneAtATime<T>(fn: () => Promise<T>): Promise<T> {
+  const run = line.then(fn, fn);
+  line = run.catch(() => {});
+  return run;
+}
+
 /** Execute signed bytes (or sign with the agent) and confirm the result landed by reading it back through Tatum. */
 export async function executeAndConfirm(args: { tx: Transaction; signer: Ed25519Keypair } | { bytes: Uint8Array; signature: string }) {
   const client = sui();
   const r = "signer" in args
-    ? await paced(null, () => client.core.signAndExecuteTransaction({ transaction: args.tx, signer: args.signer, include: { effects: true } }))
+    ? await oneAtATime(() => client.core.signAndExecuteTransaction({ transaction: args.tx, signer: args.signer, include: { effects: true } }))
     : await paced(null, () => client.core.executeTransaction({ transaction: args.bytes, signatures: [args.signature], include: { effects: true } }));
   const t = r.Transaction ?? r.FailedTransaction!;
   if (!t.status.success) throw new Error(String(t.status.error?.message ?? "transaction failed"));
@@ -143,8 +157,10 @@ export async function executeAndConfirm(args: { tx: Transaction; signer: Ed25519
   return { digest: t.digest, confirmed: !!confirmed.Transaction?.status.success, effects: t.effects, changes };
 }
 
-/** The one wallet allowed to drive this deployment. */
-export const ownerAddress = () => env.owner || (env.ownerKey ? Ed25519Keypair.fromSecretKey(env.ownerKey).toSuiAddress() : "");
+/** The demo wallet from `.env`: runs the scripts and the test-dollar faucet. */
+export const operatorAddress = () => env.owner || (env.ownerKey ? Ed25519Keypair.fromSecretKey(env.ownerKey).toSuiAddress() : "");
+/** The signed-in wallet. Outside a request (scripts, connector) that's the demo wallet. */
+export const ownerAddress = () => currentUser() ?? operatorAddress();
 
 /** Serialize a transaction for the owner's wallet to sign. */
 export async function buildForOwner(tx: Transaction): Promise<string> {
@@ -152,8 +168,19 @@ export async function buildForOwner(tx: Transaction): Promise<string> {
   return Buffer.from(bytes).toString("base64");
 }
 
+/** SUI for gas, in MIST. */
+export async function gasBalance(address: string): Promise<bigint> {
+  const r = await paced(null, () => sui().core.getBalance({ owner: address }));
+  return BigInt(r.balance.balance);
+}
+
 /** USDC coin objects (not address balance) owned by `address`. */
 export async function usdcCoins(address: string): Promise<string[]> {
-  const r = await paced(null, () => sui().core.listCoins({ owner: address, coinType: env.usdc }));
-  return r.objects.map((c) => c.objectId);
+  return (await looseCoins(address)).ids;
+}
+
+/** Money that arrived as coins, like a deposit from an exchange. Limits can't draw on it until it moves to the address balance. */
+export async function looseCoins(address: string) {
+  const r = await paced(`coins:${address}`, () => sui().core.listCoins({ owner: address, coinType: env.usdc }));
+  return { ids: r.objects.map((c) => c.objectId), total: r.objects.reduce((sum, c) => sum + BigInt(c.balance), 0n) };
 }
