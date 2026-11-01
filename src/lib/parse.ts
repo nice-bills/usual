@@ -174,15 +174,19 @@ export async function answerFrom(question: string, memories: string[]): Promise<
   }
 }
 
-/** The LLM must always pick a tool, so noise can come back as a purchase. Money only moves on words actually said. */
-export function grounded(a: Action, text: string): boolean {
-  const t = text.toLowerCase();
-  if (a.kind === "cafe") return /\b(caf[eé]|coffee|flat white|croissant|breakfast|latte|buy|order)\b/.test(t);
-  if (a.kind === "pay" || a.kind === "set_usual") return t.includes(a.to.toLowerCase());
-  if (a.kind === "set_limit") return /\d|limit|cap|spend/.test(t);
-  if (a.kind === "cancel" || a.kind === "forget") return t.includes(a.name.toLowerCase());
-  if (a.kind === "skip") return /\b(skip|pass|next|later|don'?t know|no idea|not sure)\b/.test(t);
-  return true;
+/** The LLM must pick a tool, so noise can come back as a purchase, and people say things no rule expects.
+ *  So its reading of anything that changes money or memory is put back to the user as a question. */
+export function confirmLine(a: Action): string | null {
+  switch (a.kind) {
+    case "pay": return `Send ${a.to}${a.amount ? ` ${a.amount}` : " the usual"}?`;
+    case "cafe": return `A ${(a.item ?? "flat-white").replace("-", " ")} from the café?`;
+    case "set_limit": return `Cap ${a.category} at ${a.amount} every ${a.periodDays} days?`;
+    case "set_usual": return `Make ${a.amount} ${a.to}'s usual?`;
+    case "cancel": return `Stop ${a.name}?`;
+    case "forget": return `Forget ${a.name}?`;
+    case "skip": return "Skip this one?";
+    default: return null;
+  }
 }
 
 /** Rules first for the phrases they know (fast, free, deterministic); the LLM handles the rest. */
@@ -192,6 +196,5 @@ export async function parse(text: string, ctx: Context): Promise<{ action: Actio
   // One or two letters is noise, not a sentence.
   if ((text.match(/\p{L}/gu) ?? []).length < 3) return { action: { kind: "unknown", say: "Sorry, say that again." }, by: "rules" };
   const llm = await parseLLM(text, ctx);
-  if (!llm) return { action: ruled, by: "rules" };
-  return grounded(llm, text) ? { action: llm, by: "llm" } : { action: { kind: "unknown", say: "Sorry, say that again." }, by: "llm" };
+  return llm ? { action: llm, by: "llm" } : { action: ruled, by: "rules" };
 }

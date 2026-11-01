@@ -11,8 +11,9 @@ const records: Stamped[] = [
 const preview = vi.fn();
 
 vi.mock("./env", () => ({ MOCK: true, USDC_DECIMALS: 6, env: { symbol: "USDC" } }));
+const parsed = vi.hoisted(() => vi.fn());
 const recalled = vi.hoisted(() => vi.fn<(q: string) => Promise<string[]>>(async () => []));
-vi.mock("./parse", () => ({ answerFrom: async (_q: string, m: string[]) => m[0], notAName: () => false, parse: async () => ({ action: { kind: "pay", to: "Mum" }, by: "rules" }) }));
+vi.mock("./parse", () => ({ answerFrom: async (_q: string, m: string[]) => m[0], confirmLine: (a: { kind: string }) => (a.kind === "cafe" ? "A flat white from the café?" : null), notAName: () => false, parse: (...a: unknown[]) => parsed(...a) }));
 vi.mock("./memory", () => ({ load: async () => ({ state: reduce(records), records, source: "mock", pending: 0 }), remember: async (r: unknown[]) => ({ stored: r, queued: 0 }), memoryOn: () => true, ownedAccount: () => null, recallAbout: async (q: string) => recalled(q) }));
 vi.mock("./wallet", () => ({
   preview: (...a: unknown[]) => preview(...a),
@@ -23,6 +24,8 @@ vi.mock("./wallet", () => ({
 }));
 
 const { act, talk } = await import("./agent");
+
+beforeEach(() => parsed.mockResolvedValue({ action: { kind: "pay", to: "Mum" }, by: "rules" }));
 
 describe("chain refusal", () => {
   beforeEach(() => preview.mockReset());
@@ -40,6 +43,16 @@ describe("chain refusal", () => {
     const r = await talk("Send Mum her usual", {});
     expect(r.proposal).toMatchObject({ type: "pay", path: "owner", overLimit: "over what the agent can spend" });
     expect(r.say).toContain("needs your signature");
+  });
+});
+
+describe("the LLM can't move money on its own reading", () => {
+  it("turns an unexpected phrase into a question, not a ticket", async () => {
+    parsed.mockResolvedValueOnce({ action: { kind: "cafe", item: "flat-white" }, by: "llm" });
+    const r = await talk("grab me a cuppa", {});
+    expect(r.say).toBe("A flat white from the café?");
+    expect(r.proposal).toBeUndefined();
+    expect(r.followUp).toMatchObject({ kind: "cafe" });
   });
 });
 

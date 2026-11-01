@@ -4,7 +4,7 @@ import { env } from "./env";
 import { checkLimit, inferRecurring, suggestLimit, validateIntent, type ChainPayment, type Recurring } from "./insights";
 import { load, memoryOn, ownedAccount, recallAbout, remember } from "./memory";
 import { formatAmount, formatBalance, parseAmount, shortAddr } from "./money";
-import { answerFrom, notAName, parse, type Action } from "./parse";
+import { answerFrom, confirmLine, notAName, parse, type Action } from "./parse";
 import { categoryFor, nameForAddress, reduce, resolveContact, type Category, type Rec, type Stamped, type State } from "./records";
 import * as wallet from "./wallet";
 
@@ -77,6 +77,8 @@ export async function talk(text: string, ctx: TalkContext): Promise<Reply> {
     ? { action: ctx.followUp, by: "rules" as const }
     : await parse(text, { asking: ctx.asking, contacts: Object.values(s.contacts).map((c) => c.name) });
   const base = { heard: text, by, action, remembered: 0, memoryError: mem.error };
+  const check = by === "llm" ? confirmLine(action) : null;
+  if (check) return { ...base, say: check, followUp: action };
   const out = await run(action, s, { ...ctx, text });
   return { ...base, ...out };
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { grounded, notAName, parseRules } from "./parse";
+import { confirmLine, notAName, parseRules } from "./parse";
 
 const ctx = { contacts: ["Mum"], asking: null };
 const asking = { contacts: [], asking: { address: "0xabc" } };
@@ -57,16 +57,15 @@ describe("a question is never a name", () => {
   });
 });
 
-describe("noise never moves money", () => {
-  it("a stray word can't become a café order", () => {
-    expect(grounded({ kind: "cafe", item: "flat-white" }, "Sip")).toBe(false);
-    expect(grounded({ kind: "cafe" }, "buy a coffee")).toBe(true);
+describe("the LLM's reading of money is put back as a question", () => {
+  it("asks about a café order, however it was phrased", () => {
+    expect(confirmLine({ kind: "cafe", item: "flat-white" })).toBe("A flat white from the café?");
   });
-  it("a payment needs the name to have been said", () => {
-    expect(grounded({ kind: "pay", to: "Mum" }, "okay then")).toBe(false);
+  it("asks about a payment", () => {
+    expect(confirmLine({ kind: "pay", to: "Mum" })).toBe("Send Mum the usual?");
   });
-  it("a stray letter can't skip a question", () => {
-    expect(grounded({ kind: "skip" }, "S.")).toBe(false);
+  it("needs no question for a harmless reading", () => {
+    expect(confirmLine({ kind: "summary" })).toBeNull();
   });
   it("a sentence isn't a name", () => {
     expect(notAName("And I'Ll See You Next Time")).toBe(true);
