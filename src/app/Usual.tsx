@@ -9,6 +9,7 @@ import type { Rec as MemoryRecord, State } from "@/lib/records";
 import { fromBase64 } from "@mysten/sui/utils";
 import type { WalletApi } from "./Wallet";
 import { isEcho } from "./echo";
+import { AgentCard } from "./AgentCard";
 import { AddMoney } from "./AddMoney";
 
 const Wallet = dynamic(() => import("./Wallet"), { ssr: false });
@@ -704,6 +705,10 @@ export default function Usual({ health }: { health: Health }) {
 
   const loaded = !!snap;
   const cardUp = !!proposal || !!insight || !!done;
+  const lines = state ? Object.values(state.limits) : [];
+  // The suspended line is the one that matters; otherwise the first it earned.
+  const held = lines.find((l) => snap?.credit.suspended.includes(l.category)) ?? lines[0];
+  const agentLine = held ? { category: held.category, amount: held.amount, period: per(held.periodDays) } : null;
   const orbState = listening ? "listening" : thinking || busy ? "working" : error ? "error" : done ? "done" : idle ? "invite" : "idle";
 
   // The balance travels between centre and top instead of jumping when a card arrives.
@@ -797,6 +802,8 @@ export default function Usual({ health }: { health: Health }) {
         {snap ? (
           <p className="balance" ref={balanceEl} data-testid="balance"><Rolling value={snap.balance} /> <span className="unit">{symbol}</span></p>
         ) : !loadError && ready ? <p className="balance loading" aria-label="Loading your balance">0.00</p> : null}
+
+        {snap && !cardUp && !listening && !thinking && <AgentCard score={snap.credit.score} clean={snap.credit.clean} line={agentLine} suspended={!!agentLine && snap.credit.suspended.includes(agentLine.category)} symbol={symbol} />}
 
         {proposal && (
           <article className="card">

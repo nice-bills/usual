@@ -207,6 +207,9 @@ button, input { font: inherit; color: inherit; }
 @media (prefers-reduced-motion: reduce) {
   .orb, .approve, .ghost, .row-button, .slip, .done, .flood { transition: none; }
   .stamp { animation: none; opacity: 0.9; }
+  .agent-card { animation: none; }
+  .half.left { animation: none; transform: translate(-10px, -2px) rotate(-3deg); }
+  .half.right { animation: none; transform: translate(10px, 6px) rotate(3deg); }
   .card, .slip, .w, .pill, .check, .check::after, .tally path, .sheet, .sheet > *, .card dl > *, .card dl .pair > *, .approve { animation: none; }
   .orb[data-on="true"] { transform: none; }
   .orb[data-on="true"]::after { animation: none; opacity: 0.8; transform: scale(1.2); }
@@ -216,10 +219,35 @@ button, input { font: inherit; color: inherit; }
 }
 
 /* Short phones: the money controls must never fall below the fold. */
+/* Engraved banknote line behind the app: ink on the page, not a wash. */
+.app::before { content: ""; position: fixed; inset: 0; z-index: 0; pointer-events: none; opacity: 0.1; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='24'%3E%3Cpath d='M0 12c30-16 90-16 120 0s90 16 120 0' fill='none' stroke='%23e8ee4b' stroke-width='.7'/%3E%3C/svg%3E"); }
+
+.agent-card { position: relative; flex: none; width: min(100%, 342px); aspect-ratio: 342 / 216; box-sizing: border-box; padding: 20px; display: flex; flex-direction: column; justify-content: space-between; overflow: hidden; border-radius: 16px; color: #0a3a2a; box-shadow: 0 16px 32px rgb(0 0 0 / 0.32); animation: card-in 420ms var(--ease) both; }
+.agent-card > *, .half > * { position: relative; }
+.agent-print { position: absolute; inset: 0; width: 100%; height: 100%; }
+.agent-top { display: flex; justify-content: space-between; font-size: 14px; font-weight: 600; }
+.agent-limit { margin: 0; font-family: var(--serif); font-size: 36px; line-height: 1; font-variant-numeric: tabular-nums; }
+.agent-limit span { font-family: var(--font-sans), sans-serif; font-size: 14px; font-weight: 500; }
+.agent-note { margin: 0; display: flex; justify-content: space-between; font-size: 14px; font-weight: 500; text-transform: capitalize; }
+.agent-note span:last-child { color: #f6f4e6; text-transform: none; }
+.agent-card.unissued { color: var(--secondary); border: 1px dashed var(--muted); box-shadow: none; }
+.agent-card.unissued .agent-note { text-transform: none; }
+.agent-card.cut { overflow: visible; box-shadow: none; padding: 0; }
+.half { position: absolute; inset: 0; box-sizing: border-box; padding: 20px; display: flex; flex-direction: column; justify-content: space-between; overflow: hidden; border-radius: 16px; }
+.half.left { clip-path: polygon(0 0, 58% 0, 42% 100%, 0 100%); animation: cut-left 620ms var(--ease) 120ms both; }
+.half.right { clip-path: polygon(58% 0, 100% 0, 100% 100%, 42% 100%); animation: cut-right 620ms var(--ease) 120ms both; }
+.agent-suspended { position: absolute; left: 50%; top: 50%; margin: 0; padding: 4px 12px; border-radius: 4px; background: #0a3a2a; color: #ffb4a2; font-size: 14px; font-weight: 600; transform: translate(-50%, -50%) rotate(-4deg); }
+@keyframes card-in { from { opacity: 0; transform: translateY(16px) rotate(-2deg); } }
+@keyframes cut-left { to { transform: translate(-10px, -2px) rotate(-3deg); } }
+@keyframes cut-right { to { transform: translate(10px, 6px) rotate(3deg); } }
+
 @media (max-height: 760px) {
   .app { padding: 8px 16px; }
   .menu { top: 4px; right: 8px; }
   .stage[data-card="true"] { padding-top: 12px; gap: 8px; }
+  .agent-card { width: min(100%, 272px); padding: 12px; }
+  .half { padding: 12px; }
+  .agent-limit { font-size: 28px; }
   .stage[data-card="true"] .balance { font-size: 20px; padding-right: 40px; align-self: flex-start; }
   .amount { margin: 4px 0 8px; font-size: 28px; }
   .card dt, .card dd { padding: 4px 0; font-size: 14px; }
