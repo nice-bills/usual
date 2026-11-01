@@ -11,7 +11,7 @@ export type WalletApi = {
   address?: string;
   agent?: DeviceSigner;
   signMessage: (input: { message: Uint8Array }) => Promise<{ signature: string }>;
-  signTx: (input: { transaction: string }) => Promise<{ bytes: string; signature: string }>;
+  signTx: (input: { transaction: string; chain?: `${string}:${string}` }) => Promise<{ bytes: string; signature: string }>;
 };
 
 // The wallet only signs prebuilt bytes; all chain reads and execution go through the server (Tatum).

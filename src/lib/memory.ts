@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { MemWal, MemWalRateLimitedError } from "@mysten-incubation/memwal";
 import { operatorAddress } from "./chain";
 import { env, MOCK } from "./env";
+import { delegateKey, memoryAccount } from "./memoryAccount";
 import { decode, encode, keyOf, reduce, sentence, type Rec, type Stamped, type State } from "./records";
 import { currentUser } from "./user";
 
@@ -28,11 +29,10 @@ const QUERIES = [
 type Job = { id: string; record: Stamped };
 type Store = {
   records: Stamped[]; at: number; pending: Stamped[]; inflight: Job[]; jobs: string[]; mock: Stamped[]; memoryOn: boolean;
-  client?: MemWal; queueLoaded: boolean; rebuilding: Promise<Loaded> | null; flushing: Promise<void> | null; retryAt: number; settledAt: number;
+  client?: MemWal; account: string | null; accountAt: number; queueLoaded: boolean; rebuilding: Promise<Loaded> | null; flushing: Promise<void> | null; retryAt: number; settledAt: number;
 };
 
-// Each wallet gets its own namespace; the demo wallet keeps the original one.
-// shortcut: all testers share one Walrus Memory account (see DECISIONS 32), so the wall between them is this code. Give each wallet its own account for real users.
+// A wallet that hasn't claimed its own account yet gets a namespace on the demo account.
 const namespace = () => {
   const user = currentUser();
   return !user || user === operatorAddress() ? env.memwalNamespace : `usual-${user.slice(2, 18)}`;
@@ -46,11 +46,50 @@ const g = globalThis as unknown as { __usual?: Map<string, Store> };
 // Mock mode starts where `pnpm setup:allowances` leaves a real account: three category limits.
 const mockLimits = (): Stamped[] => ([["family", "100", 7], ["food", "3", 1]] as const)
   .map(([category, amount, periodDays], i) => ({ type: "LIMIT", category, amount, periodDays, allowanceId: `0xMOCKALLOW${i}`, capId: `0xMOCKCAP${i}`, v: i + 1 }));
+const ACCOUNT_CHECK_MS = 60_000;
+
+/** Follow what the chain says about this wallet's account: owned, not yet claimed, or revoked. */
+async function followAccount() {
+  const user = currentUser();
+  const mem = store();
+  if (MOCK || !user || user === operatorAddress() || Date.now() - mem.accountAt < ACCOUNT_CHECK_MS) return;
+  const a = await memoryAccount(user).catch((e) => { console.warn("[memory] couldn't read the account:", (e as Error).message); return null; });
+  if (!a) return;
+  mem.accountAt = Date.now();
+  if (a.authorized && a.accountId !== mem.account) {
+    mem.client = MemWal.create({ key: delegateKey(user), accountId: a.accountId!, serverUrl: env.memwalUrl, namespace: "usual" });
+    mem.account = a.accountId;
+    mem.memoryOn = true;
+    // What Usual learned before the claim moves into the wallet's own account.
+    mem.pending.push(...mem.records);
+    mem.records = [];
+    mem.at = 0;
+    saveQueue();
+  } else if (a.accountId && !a.authorized) {
+    // Revoked: Usual stops knowing anything, and nothing falls back to the demo account.
+    mem.client = undefined;
+    mem.account = null;
+    mem.memoryOn = false;
+    mem.records = [];
+    mem.pending = [];
+    mem.at = 0;
+  }
+}
+
+/** The owner just changed their account on-chain; look again now. */
+export async function accountChanged() {
+  store().accountAt = 0;
+  await followAccount();
+}
+
+/** This wallet's own account, once it has claimed one. */
+export const ownedAccount = () => store().account;
+
 function store(): Store {
   const stores = (g.__usual ??= new Map());
   const key = namespace();
   let s = stores.get(key);
-  if (!s) stores.set(key, (s = { records: [], at: 0, pending: [], inflight: [], jobs: [], mock: mockLimits(), memoryOn: true, queueLoaded: false, rebuilding: null, flushing: null, retryAt: 0, settledAt: 0 }));
+  if (!s) stores.set(key, (s = { records: [], at: 0, pending: [], inflight: [], jobs: [], mock: mockLimits(), memoryOn: true, account: null, accountAt: 0, queueLoaded: false, rebuilding: null, flushing: null, retryAt: 0, settledAt: 0 }));
   return s;
 }
 
@@ -83,6 +122,7 @@ const CACHE_MS = 60_000;
 
 /** Rebuild state. `fresh` bypasses the cache and reads everything back from Walrus. */
 export async function load(fresh = false): Promise<Loaded> {
+  await followAccount();
   const mem = store();
   if (!mem.memoryOn) return { state: reduce([]), records: [], source: MOCK ? "mock" : "cache", pending: 0 };
   if (MOCK) return { state: reduce(mem.mock), records: mem.mock, source: "mock", pending: 0 };
@@ -123,6 +163,7 @@ async function rebuild(): Promise<Loaded> {
 
 /** What memory says about this, by meaning: the plain sentences, nearest first. Never throws; a chat reply shouldn't die on it. */
 export async function recallAbout(query: string, limit = 6): Promise<string[]> {
+  await followAccount();
   const mem = store();
   if (!mem.memoryOn) return [];
   if (MOCK) {
@@ -140,6 +181,7 @@ export async function recallAbout(query: string, limit = 6): Promise<string[]> {
 
 /** Store facts. Returns at once; failed writes stay queued and retry on the next request. */
 export async function remember(recs: Rec[]): Promise<{ stored: Stamped[]; queued: number }> {
+  await followAccount();
   const mem = store();
   if (!mem.memoryOn) return { stored: [], queued: 0 };
   const now = Date.now();

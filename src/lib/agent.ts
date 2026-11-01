@@ -2,7 +2,7 @@
 // Walrus Memory says and what the limits allow before any money moves.
 import { env } from "./env";
 import { checkLimit, inferRecurring, suggestLimit, validateIntent, type ChainPayment, type Recurring } from "./insights";
-import { load, memoryOn, recallAbout, remember } from "./memory";
+import { load, memoryOn, ownedAccount, recallAbout, remember } from "./memory";
 import { formatAmount, formatBalance, parseAmount, shortAddr } from "./money";
 import { answerFrom, notAName, parse, type Action } from "./parse";
 import { categoryFor, nameForAddress, reduce, resolveContact, type Category, type Rec, type Stamped, type State } from "./records";
@@ -58,7 +58,7 @@ export async function snapshot(fresh = false, skip: string[] = []) {
     balance: formatBalance(bal),
     // Arrived but not yet where limits can spend it.
     loose: loose ? formatAmount(loose) : null,
-    memory: { count: mem.records.length, source: mem.source, pending: mem.pending, error: mem.error },
+    memory: { count: mem.records.length, source: mem.source, pending: mem.pending, error: mem.error, account: ownedAccount() },
     state: mem.state,
     questions: questionsFrom(hist, mem.state, skip),
     // From the chain, not memory: this stays true even when a memory write failed.

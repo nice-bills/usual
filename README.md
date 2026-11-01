@@ -2,7 +2,7 @@
 
 A wallet with no buttons that learns how you talk about money.
 
-Hold to talk ("Send Mum her usual"). Usual shows what it heard and what it understood, then pays. It remembers who "Mum" is, what "the usual" means, your subscriptions and your limits. That memory is built from your chain history, lives in **your** Walrus Memory account, and the chain enforces your limits.
+Tap and talk ("Send Mum her usual"). It answers aloud and keeps listening. Usual shows what it heard and what it understood, then pays. It remembers who "Mum" is, what "the usual" means, your subscriptions and your limits. That memory is built from your chain history, lives in **your** Walrus Memory account, and the chain enforces your limits.
 
 Built for Total Recall (Tatum × Walrus), Track 3: Consumer Finance.
 
@@ -28,6 +28,16 @@ Open http://localhost:3000, then:
 | **Sui allowances** | Learned limits are native `0x2::allowance` objects with periodic rate limits. The agent key is the spender and cannot exceed them. Above a limit, only the owner's signature pays. |
 | **MPP (402) on Sui** | The café is an MPP merchant (`@suimpp/mpp`). The agent answers the 402 by paying from the food allowance. Over the limit, the owner approves a one-shot allowance and the agent completes the payment. |
 
+Three things are the user's, not ours:
+
+- **Memory:** each wallet owns a Walrus Memory account on mainnet. Walrus sponsors the setup, so no mainnet SUI is needed. Usual holds a delegate key the owner can revoke from Settings; the moment they do, Usual knows nothing.
+- **The agent key:** it is created on the user's device and can't be read out. Inside a limit the device signs and no popup appears. The server only builds transactions, so a breach can't spend.
+- **The money:** it stays in the user's wallet. Sui allowances cap what the agent can spend, on-chain.
+
+Anyone can try it on testnet: connect a wallet, and Usual gives you test dollars and sample history to learn from. Money from any other wallet or exchange arrives as a deposit you approve once.
+
+Memory decides what happens. Open questions are answered only from semantic recall, and a note like "don't pay Mum until she confirms" stops the agent paying her even inside a limit.
+
 The LLM proposes, code disposes. Speech becomes one typed action, from rules or a free LLM (Groq / Hugging Face). Server code validates every action against memory and limits. Ambiguity becomes a question ("Which Kofi?").
 
 The memory is a real learning loop:
@@ -51,6 +61,7 @@ corepack pnpm seed              # recurring history: Mum ×3, gym 30/30/35, stre
 corepack pnpm setup:allowances  # family 100/wk, food 3/day, subscriptions 60/mo
 corepack pnpm dev
 corepack pnpm proof             # memory count + blob IDs
+corepack pnpm testnet:setup     # publish test dollars, write .env.public for a public deployment
 ```
 
 See `.env.example`, `DECISIONS.md` and `PROGRESS.md`.

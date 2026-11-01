@@ -13,7 +13,7 @@ import { AddMoney } from "./AddMoney";
 const Wallet = dynamic(() => import("./Wallet"), { ssr: false });
 
 type Health = { mock: boolean; network: string; tatum: boolean; walrusMemory: boolean; llm: string };
-type Snapshot = { owner: string; memoryOn: boolean; symbol: string; balance: string; loose: string | null; state: State; activity: { name: string; amount: string; digest: string }[]; memory: { count: number; source: string; pending: number; error?: string }; questions: Question[] };
+type Snapshot = { owner: string; memoryOn: boolean; symbol: string; balance: string; loose: string | null; state: State; activity: { name: string; amount: string; digest: string }[]; memory: { account: string | null; count: number; source: string; pending: number; error?: string }; questions: Question[] };
 type CafeSigning = { bytes: string; proof: string; challenge: string };
 type Outcome = { say: string; digest?: string; needsOwner?: string; bytes?: string; agentBytes?: string; agentCafe?: CafeSigning; allowanceId?: string; ok?: boolean; followUp?: Action };
 
@@ -268,11 +268,41 @@ export default function Usual({ health }: { health: Health }) {
     return api<Outcome>("cafe/finish", { item, challenge: s.challenge, bytes: tx.bytes, signature: tx.signature, proofSignature: proof.signature });
   }, [wallet]);
 
-  /** New wallet: test money and gas from the server, one approval, then the device key lays down sample history. */
+  /** One sponsored step at a time on mainnet: the wallet signs, Walrus pays. Returns once the chain agrees. */
+  const memoryAccount = useCallback(async (revoke = false) => {
+    for (let i = 0; i < 2; i++) {
+      const p = await api<{ done?: boolean; message: string; kind: string; timestamp: number; nonce: string }>("memory/account", { action: "prepare", revoke });
+      if (p.done) return;
+      const { signature } = await wallet!.signMessage({ message: new TextEncoder().encode(p.message) });
+      const s = await api<{ bytes: string; digest: string }>("memory/account", { action: "sponsor", kind: p.kind, timestamp: p.timestamp, nonce: p.nonce, signature });
+      const signed = await wallet!.signTx({ transaction: s.bytes, chain: "sui:mainnet" });
+      await api("memory/account", { action: "execute", digest: s.digest, signature: signed.signature });
+      if (revoke) return;
+    }
+  }, [wallet]);
+
+  const changeMemoryAccount = useCallback(async (revoke: boolean) => {
+    setError("");
+    setBusy("Waiting for your wallet…");
+    try {
+      await memoryAccount(revoke);
+      setHint(revoke ? "Done. I can't read your memory any more." : "Your memory is yours now.");
+      await refresh();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy("");
+    }
+  }, [memoryAccount, refresh]);
+
+  /** New wallet: its own memory first, then test money and gas from the server, one approval, then the device key lays down sample history. */
   const getStarted = useCallback(async () => {
     setError("");
-    setBusy("Getting your test money…");
+    setBusy("Making your memory yours…");
     try {
+      // Walrus's sponsor can be busy. A tester can still try Usual, and claim from Settings later.
+      await memoryAccount().catch((e) => setHint(`Your memory stays on Usual's account for now. ${(e as Error).message}`));
+      setBusy("Getting your test money…");
       const { bytes } = await api<{ bytes: string }>("faucet", {});
       const r = await signAndSubmit("starter", bytes);
       if (r.ok === false || !r.allowanceId) throw new Error(r.say || "That approval didn't go through.");
@@ -287,7 +317,7 @@ export default function Usual({ health }: { health: Health }) {
     } finally {
       setBusy("");
     }
-  }, [signAndSubmit, signAsAgent, firstLoad]);
+  }, [memoryAccount, signAndSubmit, signAsAgent, firstLoad]);
 
   const addDeposit = useCallback(async () => {
     setError("");
@@ -679,6 +709,14 @@ export default function Usual({ health }: { health: Health }) {
         })}
         <button className="row-button" onClick={async () => { await api("memory", { on: !snap?.memoryOn }); await refresh(); }}>Memory: {snap?.memoryOn === false ? "off" : "on"}</button>
         <button className="row-button" onClick={() => { close(); refresh(true).then(() => setHint("Rebuilt from Walrus Memory.")); }}>Rebuild from Walrus</button>
+        {!health.mock && (snap?.memory.account ? (
+          <>
+            <p className="fine">Yours, in <a href={`https://suiscan.xyz/mainnet/object/${snap.memory.account}`} target="_blank" rel="noreferrer">your own Walrus account</a>. Only your wallet can let me in or lock me out.</p>
+            <button className="row-button" onClick={() => { close(); changeMemoryAccount(true); }}>Revoke Usual&apos;s access</button>
+          </>
+        ) : (
+          <button className="row-button" onClick={() => { close(); changeMemoryAccount(false); }}>Make this memory yours</button>
+        ))}
 
         <h2>Limits</h2>
         {state && Object.values(state.limits).length ? Object.values(state.limits).map((l) => (

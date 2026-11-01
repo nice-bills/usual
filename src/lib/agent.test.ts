@@ -13,7 +13,7 @@ const preview = vi.fn();
 vi.mock("./env", () => ({ MOCK: true, USDC_DECIMALS: 6, env: { symbol: "USDC" } }));
 const recalled = vi.hoisted(() => vi.fn<(q: string) => Promise<string[]>>(async () => []));
 vi.mock("./parse", () => ({ answerFrom: async (_q: string, m: string[]) => m[0], notAName: () => false, parse: async () => ({ action: { kind: "pay", to: "Mum" }, by: "rules" }) }));
-vi.mock("./memory", () => ({ load: async () => ({ state: reduce(records), records, source: "mock", pending: 0 }), remember: async (r: unknown[]) => ({ stored: r, queued: 0 }), memoryOn: () => true, recallAbout: async (q: string) => recalled(q) }));
+vi.mock("./memory", () => ({ load: async () => ({ state: reduce(records), records, source: "mock", pending: 0 }), remember: async (r: unknown[]) => ({ stored: r, queued: 0 }), memoryOn: () => true, ownedAccount: () => null, recallAbout: async (q: string) => recalled(q) }));
 vi.mock("./wallet", () => ({
   preview: (...a: unknown[]) => preview(...a),
   balance: async () => 400_000_000n,

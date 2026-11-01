@@ -23,6 +23,10 @@ Two things bit us. Building one transaction fires several calls, so the free pla
 
 There is no database of user knowledge in Usual. You own the Walrus Memory account; Usual holds a delegate key you can revoke. Each fact is one memory: a plain sentence for semantic recall, plus one machine-readable line. Contacts, usual amounts, limits, subscriptions, payments and mentions are all stored this way, and the newest version of a fact wins.
 
+Ownership here is literal. Each wallet creates its own Walrus Memory account on mainnet the first time it signs in. Walrus sponsors that, so nobody needs mainnet SUI to try this, even though the money in the demo is on testnet. In Settings there's a button that revokes Usual's key. Press it and Usual knows nothing, because the chain says it no longer may.
+
+The same idea runs through spending. The agent's key is created on your device and can't be read out of the browser. Our server builds transactions but can't sign them, so breaking into it can't move your money. The chain caps what that key can do, and memory can override it: tell Usual "don't pay Mum until she confirms" and the agent won't, even inside your limit.
+
 On load, Usual rebuilds its whole state from Walrus with one typed recall per record type. A fresh process with an empty cache knows everything. Revoke the delegate and recall fails, so "Send Mum her usual" answers "Who's Mum?". The memory was never Usual's.
 
 ## How it learned over time

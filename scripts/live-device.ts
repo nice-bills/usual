@@ -33,6 +33,21 @@ await api("auth", { address, agent, at: a.at, signature });
 const empty = await api("state");
 check("any wallet signs in, starts empty", empty.owner === address && empty.balance.startsWith("0"), empty.balance);
 
+// Claim a real mainnet memory account. This wallet has never held mainnet SUI: Walrus sponsors it.
+const claim = async (revoke = false) => {
+  const p = await api("memory/account", { action: "prepare", revoke });
+  if (p.done) return false;
+  const { signature } = await wallet.signPersonalMessage(new TextEncoder().encode(p.message));
+  const s = await api("memory/account", { action: "sponsor", kind: p.kind, timestamp: p.timestamp, nonce: p.nonce, signature });
+  const signed = await wallet.signTransaction(fromBase64(s.bytes));
+  await api("memory/account", { action: "execute", digest: s.digest, signature: signed.signature });
+  return true;
+};
+await claim();
+await claim();
+const mine = await api("state?fresh=1");
+check("wallet owns its memory account", !!mine.memory.account, mine.memory.account);
+
 const { bytes } = await api("faucet", {});
 const started = await api("submit", { kind: "starter", ...(await asOwner(bytes)), meta: {} });
 check("one owner approval", !!started.allowanceId);
@@ -100,6 +115,13 @@ check("a deposit is noticed", s.loose === "25", s.loose);
 const d = await api("deposit", {});
 const added = await api("submit", { kind: "deposit", ...(await asOwner(d.bytes)), meta: {} });
 check("owner moves it where limits reach", added.ok === true, added.say);
+
+// Ownership means the owner can lock Usual out.
+const held = await api("state");
+await claim(true);
+const after = await api("state?fresh=1");
+const blind = await say("when do I have to pay rent?");
+check("owner revokes, Usual knows nothing", after.memory.account === null && after.memoryOn === false && held.memory.count > 0 && !/first/i.test(blind.say), `${held.memory.count} memories, then ${after.memory.count}`);
 
 console.log(failures ? `\n${failures} FAILED` : "\nall passed");
 process.exit(failures ? 1 : 0);

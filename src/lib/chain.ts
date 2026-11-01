@@ -52,6 +52,15 @@ export function sui(): SuiGrpcClient {
   }));
 }
 
+let mainnetCached: SuiGrpcClient | undefined;
+/** Walrus Memory accounts live on mainnet, whatever network the money is on. */
+export function mainnet(): SuiGrpcClient {
+  return (mainnetCached ??= new SuiGrpcClient({
+    network: "mainnet",
+    transport: new PacedTransport({ host: "sui-mainnet-grpc.gateway.tatum.io:443", channelCredentials: ChannelCredentials.createSsl(), meta: { "x-api-key": env.tatumKey } }),
+  }));
+}
+
 export const agent = () => Ed25519Keypair.fromSecretKey(env.agentKey);
 /** The spender on this user's allowances: their device key, or the server key for scripts and the connector. */
 export const agentAddress = () => deviceAgent() ?? agent().toSuiAddress();
