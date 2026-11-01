@@ -4,7 +4,7 @@ import { json, owned } from "@/lib/http";
 import { CATEGORIES } from "@/lib/records";
 
 const Body = z.object({
-  kind: z.enum(["pay", "agent-pay", "limit", "cafe", "starter", "seed", "deposit"]),
+  kind: z.enum(["pay", "agent-pay", "limit", "cafe", "seed", "deposit"]),
   bytes: z.string().min(1),
   signature: z.string().min(1),
   meta: z.object({

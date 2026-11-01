@@ -107,7 +107,9 @@ export function outgoingPayments(address: string, limit = 200, spender = deviceA
           const tx = frame.transaction;
           if (!tx) continue;
           const at = tx.timestamp ? Number(tx.timestamp.seconds) * 1000 + Math.floor(tx.timestamp.nanos / 1e6) : Date.now();
-          if (!tx.balanceChanges.some((c) => c.coinType === env.usdc && c.address === address && BigInt(c.amount ?? "0") < 0n)) continue;
+          // A device key is this user's alone, so its own spends are theirs too. The server key is shared.
+          const payers = deviceAgent() ? [address, spender] : [address];
+          if (!tx.balanceChanges.some((c) => c.coinType === env.usdc && payers.includes(c.address!) && BigInt(c.amount ?? "0") < 0n)) continue;
           for (const c of tx.balanceChanges) {
             if (c.coinType === env.usdc && c.address !== address && c.address !== spender && BigInt(c.amount ?? "0") > 0n) {
               out.push({ to: c.address!, amount: BigInt(c.amount!), digest: tx.digest!, at });

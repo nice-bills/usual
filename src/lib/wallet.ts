@@ -112,6 +112,7 @@ const LOW_GAS = 30_000_000n;
 // Oldest first, so the gym's rise from 30 to 35 shows up as a price change.
 const SAMPLE_PAYMENTS = [[50, 30, 12], [50, 30, 12], [50, 35, 12]];
 export const sampleRounds = SAMPLE_PAYMENTS.length;
+const SAMPLE_TOTAL = SAMPLE_PAYMENTS.flat().reduce((sum, n) => sum + dollars(n), 0n);
 
 /** The device key pays its own gas, so whoever signs for it tops it up in the same approval. */
 async function fuelAgent(tx: Transaction) {
@@ -132,30 +133,30 @@ export async function claimTestMoney() {
   const faucet = Ed25519Keypair.fromSecretKey(env.ownerKey);
   const tx = new Transaction();
   tx.setSender(faucet.toSuiAddress());
+  const mint = (amount: bigint, to: string) => {
+    const coin = tx.moveCall({ target: "0x2::coin::mint", typeArguments: [env.usdc], arguments: [tx.object(env.treasuryCap), tx.pure.u64(amount)] });
+    tx.moveCall({ target: "0x2::coin::send_funds", typeArguments: [env.usdc], arguments: [coin, tx.pure.address(to)] });
+  };
+  const fuel = (amount: bigint, to: string) => {
+    const [coin] = tx.splitCoins(tx.gas, [amount]);
+    tx.transferObjects([coin], to);
+  };
   if (money === 0n) {
-    const coin = tx.moveCall({ target: "0x2::coin::mint", typeArguments: [env.usdc], arguments: [tx.object(env.treasuryCap), tx.pure.u64(TEST_MONEY)] });
-    tx.moveCall({ target: "0x2::coin::send_funds", typeArguments: [env.usdc], arguments: [coin, tx.pure.address(me)] });
+    // The device key makes the sample payments from its own money, so seeding asks the wallet for nothing.
+    mint(TEST_MONEY - SAMPLE_TOTAL, me);
+    mint(SAMPLE_TOTAL, agentAddress());
+    fuel(AGENT_GAS, agentAddress());
   }
-  if (gas < LOW_GAS) {
-    const [fuel] = tx.splitCoins(tx.gas, [OWNER_GAS]);
-    tx.transferObjects([fuel], me);
-  }
+  if (gas < LOW_GAS) fuel(OWNER_GAS, me);
   await executeAndConfirm({ tx, signer: faucet });
 }
 
-/** One approval lets the device key lay down sample history, so a new wallet has patterns to learn from. */
-export async function starterBytes() {
-  if (MOCK) return mockBytes({ kind: "oneshot", amount: "0" });
-  return oneShotBytes("sample payments", SAMPLE_PAYMENTS.flat().reduce((sum, n) => sum + dollars(n), 0n));
-}
-
-/** One transaction paying all three sample payees, spent from the one-shot allowance. */
-export async function seedBytes(allowanceId: string, round: number) {
-  const from = { objectId: allowanceId, funder: owner() };
+/** One transaction paying all three sample payees from the device key's own test money. */
+export async function seedBytes(round: number) {
   const tx = new Transaction();
   tx.setSender(agentAddress());
   SAMPLE_PAYMENTS[round].forEach((amount, i) => {
-    const coin = tx.coin({ balance: dollars(amount), type: env.usdc, allowance: from });
+    const coin = tx.coin({ balance: dollars(amount), type: env.usdc });
     tx.transferObjects([coin], [MOCK_ADDR.mum, MOCK_ADDR.gym, MOCK_ADDR.stream][i]);
   });
   return buildForOwner(tx);

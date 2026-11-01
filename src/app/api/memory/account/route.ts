@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { json, owned } from "@/lib/http";
-import { accountChanged } from "@/lib/memory";
+import { accountChanged, claimStarted } from "@/lib/memory";
 import { execute, memoryAccount, nextStep, prepare, sponsor } from "@/lib/memoryAccount";
 import { currentUser } from "@/lib/user";
 
@@ -23,5 +23,6 @@ export const POST = owned(async (req) => {
     return json(now);
   }
   const step = b.revoke ? (account.authorized ? "remove" : null) : nextStep(account);
+  if (step && !b.revoke) claimStarted();
   return json(step ? { step, ...(await prepare(owner, step, account.accountId)) } : { done: true });
 });

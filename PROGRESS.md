@@ -75,3 +75,5 @@
 Any wallet can now use a deployment. `scripts/live-device.ts` runs a brand-new wallet through everything on testnet with real Walrus memory: faucet, sample history, naming, limit, device-signed payment, memory overriding a limit, semantic recall, MPP café from the device, deposit. All passed. Not yet tried with a real Slush wallet in a browser. See DECISIONS 38 to 46. Deploy config for Render is `.env.public` (never committed), written by `pnpm testnet:setup`. The demo video still shows the old build.
 
 Wallet-owned memory: the same script now claims a real mainnet Walrus account from a wallet with no mainnet SUI, then revokes it and confirms Usual forgets. All 19 checks passed. 97 unit and 20 e2e tests pass.
+
+Real phone test (1 Nov): Slush zkLogin sign-in, mainnet memory claim and a device-signed payment all worked. Voice, noise and first-run friction fixed from what the logs showed: DECISIONS 47 to 50.

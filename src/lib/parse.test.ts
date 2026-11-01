@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { notAName, parseRules } from "./parse";
+import { grounded, notAName, parseRules } from "./parse";
 
 const ctx = { contacts: ["Mum"], asking: null };
 const asking = { contacts: [], asking: { address: "0xabc" } };
@@ -54,5 +54,23 @@ describe("a question is never a name", () => {
   const asking = { address: "0x1", text: "Who's that?", count: 3, usual: "50" };
   it.each(["when is the rent due?", "when is the rent due", "did I pay the gym", "why is it so high"])("%s", (text) => {
     expect(parseRules(text, { asking, contacts: [] }).kind).not.toBe("name");
+  });
+});
+
+describe("noise never moves money", () => {
+  it("a stray word can't become a café order", () => {
+    expect(grounded({ kind: "cafe", item: "flat-white" }, "Sip")).toBe(false);
+    expect(grounded({ kind: "cafe" }, "buy a coffee")).toBe(true);
+  });
+  it("a payment needs the name to have been said", () => {
+    expect(grounded({ kind: "pay", to: "Mum" }, "okay then")).toBe(false);
+  });
+  it("a stray letter can't skip a question", () => {
+    expect(grounded({ kind: "skip" }, "S.")).toBe(false);
+  });
+  it("a sentence isn't a name", () => {
+    expect(notAName("And I'Ll See You Next Time")).toBe(true);
+    expect(notAName("Got It")).toBe(true);
+    expect(notAName("Streamly")).toBe(false);
   });
 });

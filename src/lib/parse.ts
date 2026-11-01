@@ -32,7 +32,7 @@ const RELATIONS: Record<string, Category> = {
 };
 
 /** A fragment of speech, not a name: saving these would poison memory. */
-export const notAName = (name: string) => name.trim().length < 2 || /^(the|a|an|and|um+|uh+|hm+|okay|ok|yes|yeah|no|nope|hello|hi|thanks|thank you|you|bye|what|that|it|this|i)$/i.test(name.trim());
+export const notAName = (name: string) => name.trim().length < 2 || name.trim().split(/\s+/).length > 3 || /[?]$/.test(name.trim()) || /^(got it|wait a minute|never ?mind|hold on|one sec(ond)?|sorry)$/i.test(name.trim()) || /^(the|a|an|and|um+|uh+|hm+|okay|ok|yes|yeah|no|nope|hello|hi|thanks|thank you|you|bye|what|that|it|this|i)$/i.test(name.trim());
 
 export function categoryOf(text: string): Category | undefined {
   for (const w of text.toLowerCase().split(/[^a-zé]+/)) if (RELATIONS[w]) return RELATIONS[w];
@@ -174,10 +174,24 @@ export async function answerFrom(question: string, memories: string[]): Promise<
   }
 }
 
+/** The LLM must always pick a tool, so noise can come back as a purchase. Money only moves on words actually said. */
+export function grounded(a: Action, text: string): boolean {
+  const t = text.toLowerCase();
+  if (a.kind === "cafe") return /\b(caf[eé]|coffee|flat white|croissant|breakfast|latte|buy|order)\b/.test(t);
+  if (a.kind === "pay" || a.kind === "set_usual") return t.includes(a.to.toLowerCase());
+  if (a.kind === "set_limit") return /\d|limit|cap|spend/.test(t);
+  if (a.kind === "cancel" || a.kind === "forget") return t.includes(a.name.toLowerCase());
+  if (a.kind === "skip") return /\b(skip|pass|next|later|don'?t know|no idea|not sure)\b/.test(t);
+  return true;
+}
+
 /** Rules first for the phrases they know (fast, free, deterministic); the LLM handles the rest. */
 export async function parse(text: string, ctx: Context): Promise<{ action: Action; by: "rules" | "llm" }> {
   const ruled = parseRules(text, ctx);
   if (ruled.kind !== "unknown") return { action: ruled, by: "rules" };
+  // One or two letters is noise, not a sentence.
+  if ((text.match(/\p{L}/gu) ?? []).length < 3) return { action: { kind: "unknown", say: "Sorry, say that again." }, by: "rules" };
   const llm = await parseLLM(text, ctx);
-  return llm ? { action: llm, by: "llm" } : { action: ruled, by: "rules" };
+  if (!llm) return { action: ruled, by: "rules" };
+  return grounded(llm, text) ? { action: llm, by: "llm" } : { action: { kind: "unknown", say: "Sorry, say that again." }, by: "llm" };
 }

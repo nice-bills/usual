@@ -43,23 +43,18 @@ const claim = async (revoke = false) => {
   await api("memory/account", { action: "execute", digest: s.digest, signature: signed.signature });
   return true;
 };
-await claim();
-await claim();
-const mine = await api("state?fresh=1");
-check("wallet owns its memory account", !!mine.memory.account, mine.memory.account);
-
-const { bytes } = await api("faucet", {});
-const started = await api("submit", { kind: "starter", ...(await asOwner(bytes)), meta: {} });
-check("one owner approval", !!started.allowanceId);
+await api("faucet", {});
 for (let round = 0; round < 3; round++) {
-  const next = await api("seed", { allowanceId: started.allowanceId, round });
+  const next = await api("seed", { round });
   await api("submit", { kind: "seed", ...(await asDevice(next.bytes)), meta: {} });
 }
 await new Promise((r) => setTimeout(r, 4000));
 let s = await api("state?fresh=1");
-check("history comes from the chain", s.questions.length === 3, `${s.balance} ${s.symbol}, ${s.questions.length} questions`);
+check("no wallet approval needed: history comes from the chain", s.questions.length === 3, `${s.balance} ${s.symbol}, ${s.questions.length} questions`);
 
 const say = async (text: string, asking?: unknown, followUp?: unknown) => api("talk", { text, asking, followUp });
+const noise = await say("Sip");
+check("noise never becomes a purchase", !noise.proposal, noise.say);
 const mum = s.questions.find((q: { usual: string }) => q.usual.startsWith("50"));
 check("names a payee", (await say("That's Mum", mum)).say.includes("Mum"));
 await new Promise((r) => setTimeout(r, 1000));
@@ -101,6 +96,14 @@ const tx = await device.signTransaction(fromBase64(shot.agentCafe.bytes));
 const proof = await device.signPersonalMessage(fromBase64(shot.agentCafe.proof));
 const receipt = await api("cafe/finish", { item: "flat-white", challenge: shot.agentCafe.challenge, bytes: tx.bytes, signature: tx.signature, proofSignature: proof.signature });
 check("MPP paid from the device", !!receipt.digest, receipt.say);
+
+// Claiming later moves what Usual already learned into the wallet's own account.
+const before = (await api("state?fresh=1")).memory.count;
+await claim();
+await claim();
+const mine = await api("state?fresh=1");
+check("wallet owns its memory account", !!mine.memory.account, mine.memory.account);
+check("what Usual learned moved with it", mine.memory.count >= before && !!mine.state.contacts.mum, `${before} memories, then ${mine.memory.count}`);
 
 // A deposit: test dollars arrive as a coin from somewhere else.
 const operator = Ed25519Keypair.fromSecretKey(env.ownerKey);

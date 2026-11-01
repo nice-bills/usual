@@ -29,7 +29,7 @@ const QUERIES = [
 type Job = { id: string; record: Stamped };
 type Store = {
   records: Stamped[]; at: number; pending: Stamped[]; inflight: Job[]; jobs: string[]; mock: Stamped[]; memoryOn: boolean;
-  client?: MemWal; account: string | null; accountAt: number; queueLoaded: boolean; rebuilding: Promise<Loaded> | null; flushing: Promise<void> | null; retryAt: number; settledAt: number;
+  client?: MemWal; account: string | null; accountAt: number; claiming: boolean; queueLoaded: boolean; rebuilding: Promise<Loaded> | null; flushing: Promise<void> | null; retryAt: number; settledAt: number;
 };
 
 // A wallet that hasn't claimed its own account yet gets a namespace on the demo account.
@@ -56,6 +56,7 @@ async function followAccount() {
   const a = await memoryAccount(user).catch((e) => { console.warn("[memory] couldn't read the account:", (e as Error).message); return null; });
   if (!a) return;
   mem.accountAt = Date.now();
+  if (a.authorized) mem.claiming = false;
   if (a.authorized && a.accountId !== mem.account) {
     mem.client = MemWal.create({ key: delegateKey(user), accountId: a.accountId!, serverUrl: env.memwalUrl, namespace: "usual" });
     mem.account = a.accountId;
@@ -65,7 +66,7 @@ async function followAccount() {
     mem.records = [];
     mem.at = 0;
     saveQueue();
-  } else if (a.accountId && !a.authorized) {
+  } else if (a.accountId && !a.authorized && !mem.claiming) {
     // Revoked: Usual stops knowing anything, and nothing falls back to the demo account.
     mem.client = undefined;
     mem.account = null;
@@ -75,6 +76,9 @@ async function followAccount() {
     mem.at = 0;
   }
 }
+
+/** Mid-claim the account exists but Usual's key isn't on it yet. That isn't a revocation, so keep what's held. */
+export const claimStarted = () => { store().claiming = true; };
 
 /** The owner just changed their account on-chain; look again now. */
 export async function accountChanged() {
@@ -89,7 +93,7 @@ function store(): Store {
   const stores = (g.__usual ??= new Map());
   const key = namespace();
   let s = stores.get(key);
-  if (!s) stores.set(key, (s = { records: [], at: 0, pending: [], inflight: [], jobs: [], mock: mockLimits(), memoryOn: true, account: null, accountAt: 0, queueLoaded: false, rebuilding: null, flushing: null, retryAt: 0, settledAt: 0 }));
+  if (!s) stores.set(key, (s = { records: [], at: 0, pending: [], inflight: [], jobs: [], mock: mockLimits(), memoryOn: true, account: null, accountAt: 0, claiming: false, queueLoaded: false, rebuilding: null, flushing: null, retryAt: 0, settledAt: 0 }));
   return s;
 }
 
@@ -127,7 +131,9 @@ export async function load(fresh = false): Promise<Loaded> {
   if (!mem.memoryOn) return { state: reduce([]), records: [], source: MOCK ? "mock" : "cache", pending: 0 };
   if (MOCK) return { state: reduce(mem.mock), records: mem.mock, source: "mock", pending: 0 };
   void flush();
-  if (!fresh && Date.now() - mem.at < CACHE_MS) {
+  // A stale copy answers now and refreshes behind it: a reply never waits on nine recalls.
+  if (!fresh && mem.at) {
+    if (Date.now() - mem.at >= CACHE_MS) mem.rebuilding ??= rebuild().finally(() => { mem.rebuilding = null; });
     const records = [...mem.records, ...mem.pending];
     return { state: reduce(records), records, source: "cache", pending: unsaved() };
   }

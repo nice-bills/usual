@@ -41,6 +41,7 @@ export function questionsFrom(history: ChainPayment[], s: State, skip: string[] 
   const known = new Set(Object.values(s.contacts).map((c) => c.address));
   return inferRecurring(history)
     .filter((r) => !known.has(r.address) && !skip.includes(r.address) && r.address !== wallet.cafeAddress())
+    .sort((a, b) => (a.usual === b.usual ? 0 : a.usual > b.usual ? -1 : 1)) // Biggest first: those are the ones people recognise.
     .map((r) => ({
       address: r.address,
       count: r.count,
@@ -164,9 +165,12 @@ async function run(a: Action, s: State, ctx: TalkContext): Promise<Out> {
 
 /** Anything that isn't a command goes to memory: Walrus recalls by meaning, and the reply can only use what came back. */
 async function ask(llmSay: string | undefined, text?: string): Promise<Out> {
-  const memories = text ? await recallAbout(text) : [];
-  const say = memories.length ? await answerFrom(text!, memories) : null;
-  return { say: say ?? llmSay ?? "I don't have anything on that yet. Tell me and I'll remember.", remembered: 0 };
+  // "Got it" and "wait a minute" aren't questions, and answering them from memory sounds unhinged.
+  const question = !!text && (text.trim().endsWith("?") || /^(what|when|where|who|why|how|which|did|do|does|is|are|am|can|have|has|tell me)\b/i.test(text.trim()));
+  if (!question) return { say: llmSay ?? "OK.", remembered: 0 };
+  const memories = await recallAbout(text);
+  const say = memories.length ? await answerFrom(text, memories) : null;
+  return { say: say ?? "I don't have anything on that yet. Tell me and I'll remember.", remembered: 0 };
 }
 
 async function name(a: Extract<Action, { kind: "name" }>, s: State, ctx: TalkContext): Promise<Out> {
@@ -345,7 +349,7 @@ export async function recordPayment(s: State, address: string, amount: bigint, d
 }
 
 /** Owner signed something: a payment, a new limit, or a one-shot café approval. */
-export async function afterSigned(kind: "pay" | "agent-pay" | "limit" | "cafe" | "starter" | "seed" | "deposit", bytes: string, signature: string, meta: { category?: Category; amount?: string; periodDays?: number; item?: string }) {
+export async function afterSigned(kind: "pay" | "agent-pay" | "limit" | "cafe" | "seed" | "deposit", bytes: string, signature: string, meta: { category?: Category; amount?: string; periodDays?: number; item?: string }) {
   const { state: s } = await load();
   const before = kind === "deposit" ? await wallet.looseBalance() : 0n;
   const r = await wallet.submitSigned(bytes, signature);
@@ -360,7 +364,6 @@ export async function afterSigned(kind: "pay" | "agent-pay" | "limit" | "cafe" |
   }
   const allowanceId = r.allowances[0];
   if (!allowanceId) return { ok: false, digest: r.digest, say: "Signed, but no allowance was created." };
-  if (kind === "starter") return { ok: true, digest: r.digest, allowanceId, say: "" };
   if (kind === "limit") {
     const amount = parseAmount(meta.amount ?? "");
     if (!meta.category || amount == null || !meta.periodDays) return { ok: false, digest: r.digest, say: "Missing limit details." };

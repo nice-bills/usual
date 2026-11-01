@@ -8,6 +8,7 @@ import type { Action } from "@/lib/parse";
 import type { Rec as MemoryRecord, State } from "@/lib/records";
 import { fromBase64 } from "@mysten/sui/utils";
 import type { WalletApi } from "./Wallet";
+import { isEcho } from "./echo";
 import { AddMoney } from "./AddMoney";
 
 const Wallet = dynamic(() => import("./Wallet"), { ssr: false });
@@ -145,7 +146,7 @@ export default function Usual({ health }: { health: Health }) {
   const [gate, setGate] = useState<{ label: string; go: () => void } | null>(null);
   // Phones only open a wallet popup from a tap, and by now the tap that started this is long gone.
   const askWallet = useCallback(async <T,>(label: string, sign: () => Promise<T>) => {
-    await new Promise<void>((go) => setGate({ label, go }));
+    if (navigator.maxTouchPoints > 0) await new Promise<void>((go) => setGate({ label, go }));
     return sign();
   }, []);
   const [listening, setListening] = useState(false);
@@ -165,6 +166,10 @@ export default function Usual({ health }: { health: Health }) {
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const orb = useRef<HTMLButtonElement>(null);
   const conversation = useRef(false);
+  const speechTurn = useRef(0);
+  const lastSpoken = useRef("");
+  const dropped = useRef(false);
+  const micOpening = useRef(false);
   const listenAgain = useRef<(() => void) | null>(null);
   const awaitingYes = useRef<Proposal | null>(null);
   const audioContext = useRef<AudioContext | null>(null);
@@ -177,13 +182,25 @@ export default function Usual({ health }: { health: Health }) {
   const signingIn = useRef(false);
 
   /** Resolves when the voice has finished, so the mic never hears Usual talking. */
+  /** Throw away what the mic has so far. Used when Usual is about to talk, so it never hears itself. */
+  const dropTurn = useCallback(() => {
+    if (recorder.current?.state !== "recording") return;
+    dropped.current = true;
+    recorder.current.stop();
+  }, []);
+
   const speak = useCallback(async (text: string) => {
     const audio = player.current;
     if (!voiceOn || !audio || health.llm === "rules") return;
+    const turn = ++speechTurn.current;
+    lastSpoken.current = text;
+    dropTurn();
     try {
       const res = await fetch("/api/tts", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: text.slice(0, 190) }) });
       if (!res.ok) return;
-      audio.src = URL.createObjectURL(await res.blob());
+      const blob = await res.blob();
+      if (turn !== speechTurn.current) return; // Something newer is being said.
+      audio.src = URL.createObjectURL(blob);
       await audio.play();
       await new Promise<void>((done) => {
         audio.onended = () => done();
@@ -193,13 +210,16 @@ export default function Usual({ health }: { health: Health }) {
       });
     } catch (e) {
       note("voice-failed", { message: (e as Error).message }); // the words are on screen, so this stays silent
+    } finally {
+      if (turn === speechTurn.current) speechTurn.current = 0;
     }
-  }, [voiceOn, health]);
+  }, [voiceOn, health, dropTurn]);
 
   /** In a conversation, listen again once Usual has finished talking. */
   const keepListening = useCallback(async (spoken: Promise<void>) => {
     await spoken;
-    if (conversation.current) listenAgain.current?.();
+    // Only the last reply reopens the mic, and never mid-approval: two reopenings ran two recorders.
+    if (conversation.current && !speechTurn.current && !running.current) listenAgain.current?.();
   }, []);
 
   const cancelAutoPay = () => {
@@ -252,7 +272,7 @@ export default function Usual({ health }: { health: Health }) {
   useEffect(() => { if (ready) firstLoad(); }, [ready, firstLoad]);
 
   /** Owner signature path: server builds and validates, wallet signs, server executes through Tatum. */
-  const signAndSubmit = useCallback(async (kind: "pay" | "limit" | "cafe" | "starter" | "deposit", bytes: string, meta: Record<string, unknown> = {}) => {
+  const signAndSubmit = useCallback(async (kind: "pay" | "limit" | "cafe" | "deposit", bytes: string, meta: Record<string, unknown> = {}) => {
     let signed = { bytes, signature: "mock" };
     if (!health.mock) {
       setBusy("Waiting for your wallet…");
@@ -301,20 +321,14 @@ export default function Usual({ health }: { health: Health }) {
     }
   }, [memoryAccount, refresh]);
 
-  /** New wallet: its own memory first, then test money and gas from the server, one approval, then the device key lays down sample history. */
+  /** New testnet wallet: test money from the server, then the device key lays down sample history. No wallet popups. */
   const getStarted = useCallback(async () => {
     setError("");
-    setBusy("Making your memory yours…");
+    setBusy("Adding test dollars and sample payments…");
     try {
-      // Walrus's sponsor can be busy. A tester can still try Usual, and claim from Settings later.
-      await memoryAccount().catch((e) => setHint(`Your memory stays on Usual's account for now. ${(e as Error).message}`));
-      setBusy("Getting your test money…");
-      const { bytes } = await api<{ bytes: string }>("faucet", {});
-      const r = await signAndSubmit("starter", bytes);
-      if (r.ok === false || !r.allowanceId) throw new Error(r.say || "That approval didn't go through.");
-      setBusy("Adding sample payments…");
+      await api("faucet", {});
       for (let round = 0; round < 3; round++) {
-        const next = await api<{ bytes: string }>("seed", { allowanceId: r.allowanceId, round });
+        const next = await api<{ bytes: string }>("seed", { round });
         await signAsAgent("seed", next.bytes);
       }
       firstLoad();
@@ -323,7 +337,14 @@ export default function Usual({ health }: { health: Health }) {
     } finally {
       setBusy("");
     }
-  }, [memoryAccount, signAndSubmit, signAsAgent, firstLoad]);
+  }, [signAsAgent, firstLoad]);
+
+  const startedUp = useRef(false);
+  useEffect(() => {
+    if (health.mock || health.network === "mainnet" || !snap || snap.activity.length || snap.loose || startedUp.current) return;
+    startedUp.current = true;
+    getStarted();
+  }, [health, snap, getStarted]);
 
   const addDeposit = useCallback(async () => {
     setError("");
@@ -342,6 +363,7 @@ export default function Usual({ health }: { health: Health }) {
   const execute = useCallback(async (p: Proposal) => {
     if (running.current) return;
     running.current = true;
+    dropTurn();
     setError("");
     setBusy("Sending…");
     const slow = setTimeout(() => setBusy((b) => (b === "Sending…" ? "Waiting for the network to confirm…" : b)), 1800);
@@ -381,7 +403,7 @@ export default function Usual({ health }: { health: Health }) {
       running.current = false;
       setBusy("");
     }
-  }, [refresh, signAndSubmit, signAsAgent, payCafeOnDevice, speak, keepListening]);
+  }, [refresh, signAndSubmit, signAsAgent, payCafeOnDevice, speak, keepListening, dropTurn]);
 
   /** Puts memory back as it was before the last change. Money that moved stays moved. */
   const revert = useCallback(async () => {
@@ -464,6 +486,8 @@ export default function Usual({ health }: { health: Health }) {
 
   /** Holds record for Whisper. Partial audio is transcribed as you talk, the full clip on release. */
   const startWhisper = async () => {
+    if (micOpening.current || recorder.current) return;
+    micOpening.current = true;
     cancelAutoPay();
     navigator.vibrate?.(10);
     const box = orb.current?.getBoundingClientRect();
@@ -475,8 +499,9 @@ export default function Usual({ health }: { health: Health }) {
     setListening(true);
     let stream: MediaStream;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
     } catch (e) {
+      micOpening.current = false;
       note("mic-denied", { message: (e as Error).message, resumed: !!conversation.current });
       setListening(false);
       conversation.current = false;
@@ -485,6 +510,7 @@ export default function Usual({ health }: { health: Health }) {
     }
     // Released during the permission prompt: nothing was said.
     if (stopHeld.current) {
+      micOpening.current = false;
       stream.getTracks().forEach((t) => t.stop());
       setListening(false);
       setHint("Mic is on. Hold again and talk.");
@@ -494,6 +520,7 @@ export default function Usual({ health }: { health: Health }) {
     const mime = ["audio/webm", "audio/mp4"].find((m) => MediaRecorder.isTypeSupported(m)) ?? "";
     const media = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
     recorder.current = media;
+    micOpening.current = false;
     const hear = async () => {
       const form = new FormData();
       form.set("language", navigator.language.slice(0, 2));
@@ -519,6 +546,10 @@ export default function Usual({ health }: { health: Health }) {
       recorder.current = null;
       setListening(false);
       setSpeaking(false);
+      if (dropped.current) {
+        dropped.current = false;
+        return;
+      }
       if (!spoke) {
         conversation.current = false;
         setHint("Tap to talk");
@@ -530,7 +561,7 @@ export default function Usual({ health }: { health: Health }) {
       try {
         const text = await hear();
         note("transcribed", { ms: Date.now() - released, text });
-        if (text) await send(text);
+        if (text && !isEcho(text, lastSpoken.current)) await send(text);
         else {
           setHint("I didn't catch that.");
           keepListening(Promise.resolve());
@@ -844,8 +875,10 @@ export default function Usual({ health }: { health: Health }) {
           {loadError && <p className="problem" role="alert">I couldn&apos;t load your wallet. <button className="link" onClick={firstLoad}>Try again</button></p>}
           {ready && !snap && !loadError && <p className="say">Reading your memory…</p>}
           {!ready && <p className="say">{account ? "Sign the message in your wallet." : "Connect your wallet to start."}</p>}
-          {!health.mock && health.network !== "mainnet" && snap && !snap.activity.length && !snap.loose && !busy && !heard && (
-            <p className="say">This is Sui testnet, so the money is pretend. <button className="link" onClick={getStarted}>Get 1,000 test dollars</button></p>
+          {busy && !proposal && <p className="say">{busy}</p>}
+          {error && !health.mock && snap && !snap.activity.length && <button className="link" onClick={getStarted}>Try again</button>}
+          {!health.mock && idle && snap && !snap.memory.account && Object.keys(snap.state.contacts).length > 0 && (
+            <p className="say">Your memory sits on Usual&apos;s account. <button className="link" onClick={() => changeMemoryAccount(false)}>Make it yours</button></p>
           )}
           {snap?.loose && !busy && (
             <p className="say">{snap.loose} {snap.symbol} arrived. <button className="link" onClick={addDeposit}>Add it to Usual</button></p>

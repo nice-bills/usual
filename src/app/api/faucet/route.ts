@@ -1,8 +1,8 @@
 import { json, owned } from "@/lib/http";
-import { claimTestMoney, starterBytes } from "@/lib/wallet";
+import { claimTestMoney } from "@/lib/wallet";
 
-/** Fill an empty testnet wallet, then return the approval that lays down sample history. */
+/** Fill an empty testnet wallet. */
 export const POST = owned(async () => {
   await claimTestMoney();
-  return json({ bytes: await starterBytes() });
+  return json({ ok: true });
 });
