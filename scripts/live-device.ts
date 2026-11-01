@@ -97,6 +97,11 @@ const proof = await device.signPersonalMessage(fromBase64(shot.agentCafe.proof))
 const receipt = await api("cafe/finish", { item: "flat-white", challenge: shot.agentCafe.challenge, bytes: tx.bytes, signature: tx.signature, proofSignature: proof.signature });
 check("MPP paid from the device", !!receipt.digest, receipt.say);
 
+const wrong = await say("that was wrong");
+const report = (await api("state")).credit;
+const again = await say("Send Mum her usual");
+check("a mistake costs the agent its line", report.suspended.length === 1 && again.proposal?.path === "owner", `${wrong.say} | ${again.say}`);
+
 // Claiming later moves what Usual already learned into the wallet's own account.
 const before = (await api("state?fresh=1")).memory.count;
 await claim();

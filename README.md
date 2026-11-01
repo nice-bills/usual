@@ -28,6 +28,8 @@ Open http://localhost:3000, then:
 | **Sui allowances** | Learned limits are native `0x2::allowance` objects with periodic rate limits. The agent key is the spender and cannot exceed them. Above a limit, only the owner's signature pays. |
 | **MPP (402) on Sui** | The café is an MPP merchant (`@suimpp/mpp`). The agent answers the 402 by paying from the food allowance. Over the limit, the owner approves a one-shot allowance and the agent completes the payment. |
 
+**You're the bank. Your agent applies for credit.** Every fintech scores you. Usual is the one you score. It starts at 20 of 100 with no spending power. Clean payments raise its score, and it asks for a credit line like a borrower. Say "that was wrong" and the score halves, the line stops at once, and one signature cuts it on-chain. The verdicts live in your Walrus Memory; the lines are Sui allowances, so the agent can't talk its way past them.
+
 Three things are the user's, not ours:
 
 - **Memory:** each wallet owns a Walrus Memory account on mainnet. Walrus sponsors the setup, so no mainnet SUI is needed. Usual holds a delegate key the owner can revoke from Settings; the moment they do, Usual knows nothing.

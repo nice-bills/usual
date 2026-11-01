@@ -22,7 +22,7 @@ describe('Usual core flows (mock mode)', { serial: true }, () => {
     await expect(screen.getByTestId('say')).toContainText('Gym: 35 USDC a month, up from 30.');
     await say(screen, "It's Streamly, a streaming subscription");
     await expect(screen.getByTestId('say')).toContainText('Streamly: 12 USDC a month.');
-    await expect(screen.getByTestId('say')).toContainText("I'd cap subscriptions at");
+    await expect(screen.getByTestId('say')).toContainText('credit line');
     await say(screen, 'yes');
     await expect(screen.getByTestId('say')).toContainText('USDC a month on subscriptions');
     await screen.getByRole('button', 'Approve with wallet').tap();
@@ -33,7 +33,7 @@ describe('Usual core flows (mock mode)', { serial: true }, () => {
     await say(screen, 'Send Mum her usual');
     await expect(screen.getByTestId('heard')).toContainText('Send Mum her usual');
     await expect(screen.getByTestId('understood')).toContainText('50 USDC');
-    await expect(screen.getByTestId('understood')).toContainText('Mum (0x33…33)');
+    await expect(screen.getByTestId('understood')).toContainText('Mum');
     await expect(screen.getByTestId('understood')).toContainText('like the last 3 times');
     await expect(screen.getByTestId('understood')).toContainText('412.50');
     await expect(screen.getByTestId('status')).toContainText('Sent 50 USDC to Mum', { timeout: 10_000 });
@@ -127,7 +127,7 @@ describe('safety and learning on a phone', { serial: true }, () => {
     await say(screen, 'send mun 5');
     await expect(screen.getByTestId('say')).toHaveText('Did you mean Mum?');
     await say(screen, 'yes');
-    await expect(screen.getByTestId('understood')).toContainText('Mum (0x33…33)');
+    await expect(screen.getByTestId('understood')).toContainText('Mum');
     await screen.getByRole('button', 'Cancel payment').tap();
   });
 
@@ -157,6 +157,13 @@ describe('safety and learning on a phone', { serial: true }, () => {
     await expect(screen.getByText('usually 50 USDC')).toBeVisible();
     await expect(screen.getByText('100 USDC a week')).toBeVisible();
     await screen.getByRole('button', 'Close settings').tap();
+  });
+
+  test('the agent loses its line when you call a payment wrong', async ({ screen }) => {
+    await say(screen, 'that was wrong');
+    await expect(screen.getByTestId('say')).toContainText("That's on me");
+    await say(screen, 'how are you doing');
+    await expect(screen.getByTestId('say')).toContainText('wrong');
   });
 
   test('what you said about someone stops the agent paying them', async ({ screen }) => {

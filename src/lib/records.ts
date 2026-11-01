@@ -16,7 +16,8 @@ export type Rec =
   | { type: "PREFERENCE"; key: string; value: string }
   | { type: "CATEGORY"; address: string; category: Category }
   | { type: "MENTION"; name: string; at: number }
-  | { type: "DEPOSIT"; amount: string; digest: string; at: number };
+  | { type: "DEPOSIT"; amount: string; digest: string; at: number }
+  | { type: "VERDICT"; category: Category; outcome: "clean" | "wrong"; name?: string; digest: string; at: number };
 
 export type Stamped = Rec & { v: number };
 
@@ -27,6 +28,7 @@ export function keyOf(r: Rec): string {
     case "SUBSCRIPTION": case "CATEGORY": return `${r.type}:${r.address}`;
     case "PAYMENT": return `PAYMENT:${r.digest}`;
     case "DEPOSIT": return `DEPOSIT:${r.digest}`;
+    case "VERDICT": return `VERDICT:${r.digest}`;
     case "PREFERENCE": return `PREFERENCE:${r.key}`;
     case "CORRECTION": return `CORRECTION:${r.note}`;
   }
@@ -43,6 +45,7 @@ export function sentence(r: Rec): string {
     case "PREFERENCE": return `Preference: ${r.key} is ${r.value}.`;
     case "CATEGORY": return `Spending category: payments to ${r.address} count as ${r.category}.`;
     case "MENTION": return `Mention: the user talked about ${r.name}.`;
+    case "VERDICT": return `Verdict: the user marked a ${r.category} payment${r.name ? ` to ${r.name}` : ""} as ${r.outcome}.`;
     case "DEPOSIT": return `Deposit: the user added ${r.amount} ${env.symbol} to their balance.`;
   }
 }
@@ -71,6 +74,7 @@ export type State = {
   prefs: Record<string, string>;
   corrections: string[];
   mentions: Record<string, number>;
+  verdicts: Extract<Rec, { type: "VERDICT" }>[];
   count: number;
 };
 
@@ -82,7 +86,7 @@ export function reduce(recs: Stamped[]): State {
     const cur = latest.get(k);
     if (!cur || r.v >= cur.v) latest.set(k, r);
   }
-  const s: State = { contacts: {}, usuals: {}, limits: {}, subscriptions: {}, payments: [], categories: {}, prefs: {}, corrections: [], mentions: {}, count: recs.length };
+  const s: State = { contacts: {}, usuals: {}, limits: {}, subscriptions: {}, payments: [], categories: {}, prefs: {}, corrections: [], mentions: {}, verdicts: [], count: recs.length };
   for (const r of latest.values()) {
     switch (r.type) {
       case "CONTACT": if (!r.removed) s.contacts[r.name.toLowerCase()] = r; break;
@@ -94,6 +98,7 @@ export function reduce(recs: Stamped[]): State {
       case "PREFERENCE": s.prefs[r.key] = r.value; break;
       case "CORRECTION": s.corrections.push(r.note); break;
       case "MENTION": s.mentions[r.name.toLowerCase()] = r.at; break;
+      case "VERDICT": s.verdicts.push(r); break;
     }
   }
   s.payments.sort((a, b) => b.at - a.at);

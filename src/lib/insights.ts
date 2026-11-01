@@ -1,4 +1,5 @@
 // Pure money logic: recurring-payee inference, limit checks, intent validation.
+import { cleanSinceLine, suspended } from "./credit";
 import { formatAmount, parseAmount } from "./money";
 import { categoryFor, nearContact, resolveContact, type Category, type Contact, type State } from "./records";
 
@@ -79,7 +80,9 @@ export function suggestLimit(s: State, hist: ChainPayment[], now = Date.now()) {
   // Repeated approvals above a limit mean the limit is wrong: propose raising it.
   for (const [category, l] of Object.entries(s.limits) as [Category, NonNullable<State["limits"][Category]>][]) {
     const over = s.payments.filter((p) => p.category === category && p.via === "owner" && p.at >= now - 30 * DAY);
-    if (over.length < 2) continue;
+    // Three clean payments on a line earn a bigger one, as long as no mistake is outstanding.
+    if (over.length < 2 && cleanSinceLine(s, category) < 3) continue;
+    if (suspended(s, category)) continue;
     const top = over.reduce((m, p) => { const a = parseAmount(p.amount) ?? 0n; return a > m ? a : m; }, parseAmount(l.amount) ?? 0n);
     return { category, amount: formatAmount(nice((top * 6n) / 5n)), periodDays: l.periodDays, raise: true };
   }

@@ -24,6 +24,7 @@ const QUERIES = [
   "Spending category: payments count as category",
   "Mention: the user talked about",
   "Deposit: the user added USDC to their balance",
+  "Verdict: the user marked a payment as clean or wrong",
 ];
 
 type Job = { id: string; record: Stamped };

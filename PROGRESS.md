@@ -77,3 +77,5 @@ Any wallet can now use a deployment. `scripts/live-device.ts` runs a brand-new w
 Wallet-owned memory: the same script now claims a real mainnet Walrus account from a wallet with no mainnet SUI, then revokes it and confirms Usual forgets. All 19 checks passed. 97 unit and 20 e2e tests pass.
 
 Real phone test (1 Nov): Slush zkLogin sign-in, mainnet memory claim and a device-signed payment all worked. Voice, noise and first-run friction fixed from what the logs showed: DECISIONS 47 to 50.
+
+Agent credit added (DECISIONS 51, 52). Unit and e2e pass in demo mode. Not yet run live on testnet: the demo wallet is out of gas for a new tester.

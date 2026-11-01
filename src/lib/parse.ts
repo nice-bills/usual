@@ -17,6 +17,8 @@ export type Action =
   | { kind: "remember"; note: string }
   | { kind: "skip" }
   | { kind: "forget"; name: string }
+  | { kind: "mistake" }
+  | { kind: "statement" }
   | { kind: "unknown"; say?: string };
 
 export type Context = { asking?: { address: string } | null; contacts: string[] };
@@ -54,6 +56,9 @@ export function parseRules(raw: string, ctx: Context): Action {
   if (ctx.asking && /^(skip|pass|not sure|no idea|i don'?t know|dunno|ask me later|later)\b/.test(t)) return { kind: "skip" };
   const wrong = t.match(/^(?:no,?\s*)?(?:that'?s not|that isn'?t|it'?s not)\s+(?:my\s+)?(.+)$/) ?? t.match(/^(?:forget|remove|delete)\s+(?:my\s+|about\s+)?(.+)$/);
   if (wrong) return { kind: "forget", name: title(clean(wrong[1])) };
+
+  if (/^(?:no,?\s*)?(?:that was (?:wrong|a mistake)|you (?:shouldn'?t have|got that wrong|messed up)|don'?t do that again|that payment was wrong)/.test(t)) return { kind: "mistake" };
+  if (/\b(how am i doing|how are you doing|your (?:credit|score)|credit (?:score|line)|statement|report card)\b/.test(t)) return { kind: "statement" };
 
   // Answer to "Who's that?"
   const naming = t.match(/^(?:that'?s|that is|it'?s|it is|this is|they'?re)\s+(?:my\s+|the\s+|a\s+)?(.+)$/);
@@ -130,6 +135,8 @@ const TOOLS = [
   { name: "remember", description: "User asks Usual to remember a fact or correction.", properties: { note: { type: "string" } }, required: ["note"] },
   { name: "skip", description: "User doesn't know or won't say who the wallet is.", properties: {}, required: [] },
   { name: "forget", description: "User says a remembered name is wrong, or asks to forget someone.", properties: { name: { type: "string" } }, required: ["name"] },
+  { name: "mistake", description: "User says the agent's last payment was wrong or shouldn't have happened.", properties: {}, required: [] },
+  { name: "statement", description: "User asks how the agent is doing, its score, credit line or statement.", properties: {}, required: [] },
   { name: "unknown", description: "Nothing above fits; reply briefly.", properties: { say: { type: "string" } }, required: [] },
 ].map((t) => ({ type: "function" as const, function: { name: t.name, description: t.description, parameters: { type: "object", properties: t.properties, required: t.required } } }));
 
@@ -185,6 +192,7 @@ export function confirmLine(a: Action): string | null {
     case "cancel": return `Stop ${a.name}?`;
     case "forget": return `Forget ${a.name}?`;
     case "skip": return "Skip this one?";
+    case "mistake": return "Mark my last payment as wrong?";
     default: return null;
   }
 }

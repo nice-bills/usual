@@ -14,7 +14,7 @@ import { AddMoney } from "./AddMoney";
 const Wallet = dynamic(() => import("./Wallet"), { ssr: false });
 
 type Health = { mock: boolean; network: string; tatum: boolean; walrusMemory: boolean; llm: string };
-type Snapshot = { owner: string; memoryOn: boolean; symbol: string; balance: string; loose: string | null; state: State; activity: { name: string; amount: string; digest: string }[]; memory: { account: string | null; count: number; source: string; pending: number; error?: string }; questions: Question[] };
+type Snapshot = { owner: string; credit: { score: number; clean: number; wrong: number; suspended: string[] }; memoryOn: boolean; symbol: string; balance: string; loose: string | null; state: State; activity: { name: string; amount: string; digest: string }[]; memory: { account: string | null; count: number; source: string; pending: number; error?: string }; questions: Question[] };
 type CafeSigning = { bytes: string; proof: string; challenge: string };
 type Outcome = { say: string; digest?: string; needsOwner?: string; bytes?: string; agentBytes?: string; agentCafe?: CafeSigning; allowanceId?: string; ok?: boolean; followUp?: Action };
 
@@ -755,11 +755,15 @@ export default function Usual({ health }: { health: Health }) {
           <button className="row-button" onClick={() => { close(); changeMemoryAccount(false); }}>Make this memory yours</button>
         ))}
 
-        <h2>Limits</h2>
+        <h2>Usual&apos;s credit</h2>
+        <p className="row" data-testid="credit"><span>Score</span><span>{snap?.credit.score ?? 0} of 100</span></p>
+        <p className="fine">You&apos;re the bank. {snap?.credit.clean ?? 0} clean, {snap?.credit.wrong ?? 0} wrong. Say “that was wrong” and I lose the line.</p>
+
+        <h2>Credit lines</h2>
         {state && Object.values(state.limits).length ? Object.values(state.limits).map((l) => (
-          <p key={l.category} className="row"><span className="cap">{l.category}</span><span>{l.amount} {symbol} a {per(l.periodDays)}</span></p>
-        )) : <p className="fine">None yet. Say “limit food to 10 a day”.</p>}
-        <p className="fine">The chain holds the agent to these. Above one, it waits for your wallet.</p>
+          <p key={l.category} className="row"><span className="cap">{l.category}{snap?.credit.suspended.includes(l.category) ? " · suspended" : ""}</span><span>{l.amount} {symbol} a {per(l.periodDays)}</span></p>
+        )) : <p className="fine">None yet. I have to earn one.</p>}
+        <p className="fine">I can&apos;t spend past these even if I try. Above one, I wait for you.</p>
 
         <h2>Activity</h2>
         {snap?.activity.length ? snap.activity.map((p) => {
@@ -803,7 +807,7 @@ export default function Usual({ health }: { health: Health }) {
             <div data-testid="understood">
               <p className="amount"><Rolling value={proposal.amount} ms={420} /> <span className="unit">{symbol}{proposal.type === "limit" ? ` a ${per(proposal.periodDays)}` : ""}</span></p>
               <dl>
-                {proposal.type === "pay" && <><dt>To</dt><dd>{proposal.name} ({proposal.address.slice(0, 4)}…{proposal.address.slice(-2)})</dd></>}
+                {proposal.type === "pay" && <><dt>To</dt><dd>{proposal.name}</dd></>}
                 {proposal.type === "pay" && proposal.reason && <><dt>Why</dt><dd>{seenTimes(proposal.reason) > 0 && <Tally count={seenTimes(proposal.reason)} />}{proposal.reason}</dd></>}
                 {proposal.type === "cafe" && <><dt>To</dt><dd>Café · {proposal.label}</dd></>}
                 {proposal.type === "limit" && <><dt>For</dt><dd className="cap">{proposal.category}</dd></>}
@@ -834,7 +838,7 @@ export default function Usual({ health }: { health: Health }) {
         {insight && !proposal && (
           <article className="card">
             <dl>
-              {insight.rows.map((r) => <div key={r.label} className="pair"><dt>{r.label}</dt><dd>{r.value} {symbol}</dd></div>)}
+              {insight.rows.map((r) => <div key={r.label} className="pair"><dt>{r.label}</dt><dd>{r.value}{/\d$/.test(r.value) ? ` ${symbol}` : ""}</dd></div>)}
             </dl>
             {insight.note && <p className="note strong" data-testid="say">{insight.note}</p>}
             {followUp?.kind === "cancel" && <button className="ghost" onClick={() => send("yes")}>Cancel {followUp.name}</button>}

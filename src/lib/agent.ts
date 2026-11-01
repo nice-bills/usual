@@ -1,5 +1,6 @@
 // The executor. Parsed Actions are proposals; everything here is validated against what
 // Walrus Memory says and what the limits allow before any money moves.
+import { creditReport, suspended } from "./credit";
 import { env } from "./env";
 import { checkLimit, inferRecurring, suggestLimit, validateIntent, type ChainPayment, type Recurring } from "./insights";
 import { load, memoryOn, ownedAccount, recallAbout, remember } from "./memory";
@@ -46,7 +47,7 @@ export function questionsFrom(history: ChainPayment[], s: State, skip: string[] 
       address: r.address,
       count: r.count,
       usual: formatAmount(r.usual),
-      text: `You've sent ${shortAddr(r.address)} ${formatAmount(r.usual)} ${env.symbol} ${times(r.count)}. Who's that?`,
+      text: `You've sent someone ${formatAmount(r.usual)} ${env.symbol} ${times(r.count)}. Who's that?`,
     }));
 }
 
@@ -55,6 +56,7 @@ export async function snapshot(fresh = false, skip: string[] = []) {
   return {
     owner: wallet.owner(),
     memoryOn: memoryOn(),
+    credit: creditReport(mem.state),
     symbol: env.symbol,
     balance: formatBalance(bal),
     // Arrived but not yet where limits can spend it.
@@ -63,7 +65,7 @@ export async function snapshot(fresh = false, skip: string[] = []) {
     state: mem.state,
     questions: questionsFrom(hist, mem.state, skip),
     // From the chain, not memory: this stays true even when a memory write failed.
-    activity: hist.slice(0, 8).map((p) => ({ name: nameForAddress(mem.state, p.to) ?? (p.to === wallet.cafeAddress() ? "Café" : shortAddr(p.to)), amount: formatAmount(p.amount), digest: p.digest })),
+    activity: hist.slice(0, 8).map((p) => ({ name: nameForAddress(mem.state, p.to) ?? (p.to === wallet.cafeAddress() ? "Café" : "Someone"), amount: formatAmount(p.amount), digest: p.digest })),
   };
 }
 
@@ -135,6 +137,8 @@ async function run(a: Action, s: State, ctx: TalkContext): Promise<Out> {
       };
     }
     case "summary": return summary(s);
+    case "mistake": return mistake(s);
+    case "statement": return statement(s);
     case "subscriptions": {
       const subs = Object.values(s.subscriptions).filter((x) => !x.cancelled);
       if (!subs.length) return { say: "I don't know any subscriptions yet.", remembered: 0 };
@@ -175,6 +179,30 @@ async function ask(llmSay: string | undefined, text?: string): Promise<Out> {
   return { say: say ?? "I don't have anything on that yet. Tell me and I'll remember.", remembered: 0 };
 }
 
+/** The owner calls a payment wrong: the score drops, the line stops at once, and a signature makes the cut real on-chain. */
+async function mistake(s: State): Promise<Out> {
+  const last = s.payments[0];
+  if (!last) return { say: "I haven't paid anyone yet.", remembered: 0 };
+  const n = await write([{ type: "VERDICT", category: last.category, outcome: "wrong", name: last.name, digest: `wrong-${last.digest}`, at: Date.now() }]);
+  const after = { ...s, verdicts: [...s.verdicts, { type: "VERDICT" as const, category: last.category, outcome: "wrong" as const, digest: last.digest, at: Date.now() }] };
+  const { score } = creditReport(after);
+  const line = s.limits[last.category];
+  const cut = line ? (parseAmount(line.amount) ?? 0n) / 2n : 0n;
+  const followUp: Action | null = line && cut ? { kind: "set_limit", category: last.category, amount: formatAmount(cut), periodDays: line.periodDays } : null;
+  return {
+    say: `That's on me. My score is down to ${score}, and I won't pay ${last.category} on my own.${followUp ? ` Want to cut my line to ${formatAmount(cut)}?` : ""}`,
+    followUp,
+    remembered: n,
+  };
+}
+
+function statement(s: State): Out {
+  const r = creditReport(s);
+  const lines = Object.values(s.limits).map((l) => ({ label: `${l.category}${r.suspended.includes(l.category) ? " (suspended)" : ""}`, value: `${l.amount} a ${l.periodDays === 1 ? "day" : l.periodDays === 7 ? "week" : "month"}` }));
+  const note = `${r.clean} clean, ${r.wrong} wrong. You score me; I don't score you.`;
+  return { say: `My score is ${r.score}. ${note}`, insight: { rows: lines.length ? lines : [{ label: "No credit line yet", value: "0" }], note: `Score ${r.score}. ${note}` }, remembered: 0 };
+}
+
 async function name(a: Extract<Action, { kind: "name" }>, s: State, ctx: TalkContext): Promise<Out> {
   const q = ctx.asking;
   if (notAName(a.name)) return { say: q ? `Sorry, who's that? ${q.text}` : "Sorry, say that again.", asking: q ?? undefined, remembered: 0 };
@@ -207,7 +235,7 @@ async function name(a: Extract<Action, { kind: "name" }>, s: State, ctx: TalkCon
   const after = reduce([...stateRecords(s), ...recs.map((r) => ({ ...r, v: Date.now() }))]);
   const sug = suggestLimit(after, hist);
   if (!sug) return { say, asking: null, undo, remembered: n };
-  return { say: `${say} From what you spend, I'd cap ${sug.category} at ${sug.amount} ${env.symbol} a ${sug.periodDays === 30 ? "month" : sug.periodDays === 7 ? "week" : "day"}. OK?`, asking: null, undo, followUp: { kind: "set_limit", category: sug.category, amount: sug.amount, periodDays: sug.periodDays }, remembered: n };
+  return { say: `${say} I'd like a credit line: ${sug.amount} ${env.symbol} a ${sug.periodDays === 30 ? "month" : sug.periodDays === 7 ? "week" : "day"} for ${sug.category}. OK?`, asking: null, undo, followUp: { kind: "set_limit", category: sug.category, amount: sug.amount, periodDays: sug.periodDays }, remembered: n };
 }
 
 /** State back to records, to fold new facts in before they are indexed. */
@@ -235,16 +263,17 @@ async function pay(a: Extract<Action, { kind: "pay" }>, s: State): Promise<Out> 
   // Something the user told Usual about this person outranks every limit.
   const warned = (await load()).records.find((r) => r.type === "CORRECTION" && new RegExp(`\\b${plan.contact.name}\\b`, "i").test(r.note));
   const said = warned?.type === "CORRECTION" ? warned.note : null;
-  const allowanceId = plan.limit.ok && !plan.guard && !said ? plan.limit.allowanceId : undefined;
+  const lost = suspended(s, plan.category);
+  const allowanceId = plan.limit.ok && !plan.guard && !said && !lost ? plan.limit.allowanceId : undefined;
   let p = await wallet.preview(plan.contact.address, plan.amount, allowanceId);
   // The chain is the real enforcer. If it refuses the agent, the owner can still pay.
   const refused = !p.ok && p.path === "agent";
   if (refused) p = await wallet.preview(plan.contact.address, plan.amount);
   const overLimit = refused ? "over what the agent can spend" : plan.limit.ok ? plan.guard?.toLowerCase() : `over your ${plan.category} limit (${formatAmount(plan.limit.remaining)} left)`;
   const n = await write([{ type: "MENTION", name: plan.contact.name, at: Date.now() }]);
-  const understood = `${plan.amountText} ${env.symbol} to ${plan.contact.name} (${shortAddr(plan.contact.address)})${plan.reason ? `, ${plan.reason}` : ""} · balance after: ${formatBalance(p.balanceAfter)}`;
+  const understood = `${plan.amountText} ${env.symbol} to ${plan.contact.name}${plan.reason ? `, ${plan.reason}` : ""} · balance after: ${formatBalance(p.balanceAfter)}`;
   return {
-    say: said ? `You told me: “${said}” So this one needs your signature.` : overLimit ? `${plan.guard && plan.limit.ok && !refused ? plan.guard : `That's ${overLimit}`}, so it needs your signature.` : p.path === "owner" ? "Sign to send it." : `Sending ${plan.contact.name} ${plan.amountText}.`,
+    say: said ? `You told me: “${said}” So this one needs your signature.` : lost ? `I lost my ${plan.category} line, so this one needs your signature.` : overLimit ? `${plan.guard && plan.limit.ok && !refused ? plan.guard : `That's ${overLimit}`}, so it needs your signature.` : p.path === "owner" ? "Sign to send it." : `Sending ${plan.contact.name} ${plan.amountText}.`,
     understood,
     proposal: { type: "pay", to: plan.contact.name, name: plan.contact.name, address: plan.contact.address, amount: plan.amountText, category: plan.category, path: p.path, balanceAfter: formatBalance(p.balanceAfter), simulated: p.simulated, reason: plan.reason, overLimit },
     remembered: n,
@@ -262,7 +291,7 @@ async function cafeProposal(item: string, s: State): Promise<Out> {
   const path: wallet.Path = check?.ok ? "agent" : "owner";
   return {
     say: overLimit ? `${q.label} is ${formatAmount(q.amount)}. That's ${overLimit}, so I can't pay it on my own. Sign to approve this one.` : `Paying the café ${formatAmount(q.amount)} for a ${q.label.toLowerCase()}.`,
-    understood: `${q.label} · ${formatAmount(q.amount)} ${env.symbol} to café (${shortAddr(q.recipient)}) over MPP · balance after: ${formatBalance(bal - q.amount)}`,
+    understood: `${q.label} · ${formatAmount(q.amount)} ${env.symbol} to the café · balance after: ${formatBalance(bal - q.amount)}`,
     proposal: { type: "cafe", item, label: q.label, amount: formatAmount(q.amount), path, overLimit, balanceAfter: formatBalance(bal - q.amount) },
     remembered: 0,
   };
@@ -333,8 +362,8 @@ export async function ownerPay(to: string, amount?: string) {
 export async function recordPayment(s: State, address: string, amount: bigint, digest: string, via: "agent" | "owner" | "mpp") {
   const name = nameForAddress(s, address);
   const category = categoryFor(s, address);
-  const recs: Rec[] = [{ type: "PAYMENT", to: address, name, amount: formatAmount(amount), digest, category, at: Date.now(), via }];
-  const after = { ...s, payments: [recs[0] as Extract<Rec, { type: "PAYMENT" }>, ...s.payments] };
+  const recs: Rec[] = [{ type: "PAYMENT", to: address, name, amount: formatAmount(amount), digest, category, at: Date.now(), via }, { type: "VERDICT", category, outcome: "clean", name, digest, at: Date.now() }];
+  const after = { ...s, payments: [recs[0] as Extract<Rec, { type: "PAYMENT" }>, ...s.payments], verdicts: [...s.verdicts, recs[1] as Extract<Rec, { type: "VERDICT" }>] };
   const learned = name ? learnedUsual(after, name, address) : null;
   if (name && learned) recs.push({ type: "USUAL", name, amount: learned, count: 3 });
   else if (name && s.usuals[name.toLowerCase()]?.amount === formatAmount(amount)) {
@@ -346,7 +375,7 @@ export async function recordPayment(s: State, address: string, amount: bigint, d
   return {
     digest,
     followUp: sug?.raise ? ({ kind: "set_limit", category: sug.category, amount: sug.amount, periodDays: sug.periodDays } as Action) : undefined,
-    say: `Sent ${formatAmount(amount)} ${env.symbol}${name ? ` to ${name}` : ""}.${learned ? ` I'll treat ${learned} as ${name}'s usual from now on.` : ""}${sug?.raise ? ` You keep approving ${sug.category} above the limit. Raise it to ${sug.amount}?` : ""}`,
+    say: `Sent ${formatAmount(amount)} ${env.symbol}${name ? ` to ${name}` : ""}.${learned ? ` I'll treat ${learned} as ${name}'s usual from now on.` : ""}${sug?.raise ? ` My ${sug.category} record is clean. Can I have ${sug.amount}?` : ""}`,
   };
 }
 
@@ -370,7 +399,7 @@ export async function afterSigned(kind: "pay" | "agent-pay" | "limit" | "cafe" |
     const amount = parseAmount(meta.amount ?? "");
     if (!meta.category || amount == null || !meta.periodDays) return { ok: false, digest: r.digest, say: "Missing limit details." };
     await remember([{ type: "LIMIT", category: meta.category, amount: formatAmount(amount), periodDays: meta.periodDays, allowanceId, capId: r.caps[0] }]);
-    return { ok: true, digest: r.digest, allowanceId, say: `Done. I can spend up to ${formatAmount(amount)} ${env.symbol} a ${meta.periodDays === 1 ? "day" : meta.periodDays === 7 ? "week" : meta.periodDays === 30 ? "month" : `${meta.periodDays} days`} on ${meta.category}. Above that, I'll ask you.` };
+    return { ok: true, digest: r.digest, allowanceId, say: `Approved. I can spend up to ${formatAmount(amount)} ${env.symbol} a ${meta.periodDays === 1 ? "day" : meta.periodDays === 7 ? "week" : meta.periodDays === 30 ? "month" : `${meta.periodDays} days`} on ${meta.category}. Above that, I'll ask you.` };
   }
   return payCafe(meta.item ?? "flat-white", allowanceId, s);
 }
@@ -402,6 +431,7 @@ async function recordCafe(q: Awaited<ReturnType<typeof wallet.cafeQuote>>, r: { 
   await remember([
     { type: "CATEGORY", address: q.recipient, category: "food" },
     { type: "PAYMENT", to: q.recipient, name: "Café", amount: formatAmount(q.amount), digest: r.digest, category: "food", at: Date.now(), via },
+    { type: "VERDICT", category: "food", outcome: "clean", name: "Café", digest: r.digest, at: Date.now() },
   ]);
   return { ok: true, digest: r.digest, receipt: r.receipt, say: `Paid the café ${formatAmount(q.amount)}. Enjoy your ${q.label.toLowerCase()}.` };
 }
