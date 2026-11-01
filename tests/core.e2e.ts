@@ -55,7 +55,17 @@ describe('Usual core flows (mock mode)', { serial: true }, () => {
 
   test('unknown people get a question, not a guess', async ({ screen }) => {
     await say(screen, 'send Dad 20');
-    await expect(screen.getByTestId('say')).toHaveText("Who's Dad?");
+    await expect(screen.getByTestId('say')).toContainText("Who's Dad?");
+  });
+
+  test('a new person is one pasted address away', async ({ screen }) => {
+    await say(screen, 'send Alex 5');
+    await expect(screen.getByTestId('say')).toContainText('Paste their wallet address');
+    await say(screen, '0x' + 'a'.repeat(64));
+    await expect(screen.getByTestId('understood')).toContainText('5 USDC');
+    await expect(screen.getByTestId('understood')).toContainText('Alex');
+    await expect(screen.getByRole('button', 'Approve with wallet')).toBeVisible();
+    await say(screen, 'forget Alex');
   });
 
   test('spending summary spots the price rise and offers to cancel', async ({ screen }) => {
@@ -109,7 +119,7 @@ describe('Usual core flows (mock mode)', { serial: true }, () => {
     await expect(screen.getByTestId('memory')).toContainText('0 memories');
     await screen.getByRole('button', 'Close settings').tap();
     await say(screen, 'Send Mum her usual');
-    await expect(screen.getByTestId('say')).toHaveText("Who's Mum?");
+    await expect(screen.getByTestId('say')).toContainText("Who's Mum?");
   });
 });
 

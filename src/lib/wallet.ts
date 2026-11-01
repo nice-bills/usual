@@ -109,10 +109,6 @@ const TEST_MONEY = dollars(1000);
 const OWNER_GAS = 50_000_000n; // 0.05 SUI: the owner's approvals plus the agent's fuel.
 const AGENT_GAS = 20_000_000n;
 const LOW_GAS = 30_000_000n;
-// Oldest first, so the gym's rise from 30 to 35 shows up as a price change.
-const SAMPLE_PAYMENTS = [[50, 30, 12], [50, 30, 12], [50, 35, 12]];
-export const sampleRounds = SAMPLE_PAYMENTS.length;
-const SAMPLE_TOTAL = SAMPLE_PAYMENTS.flat().reduce((sum, n) => sum + dollars(n), 0n);
 
 /** The device key pays its own gas, so whoever signs for it tops it up in the same approval. */
 async function fuelAgent(tx: Transaction) {
@@ -142,24 +138,11 @@ export async function claimTestMoney() {
     tx.transferObjects([coin], to);
   };
   if (money === 0n) {
-    // The device key makes the sample payments from its own money, so seeding asks the wallet for nothing.
-    mint(TEST_MONEY - SAMPLE_TOTAL, me);
-    mint(SAMPLE_TOTAL, agentAddress());
+    mint(TEST_MONEY, me);
     fuel(AGENT_GAS, agentAddress());
   }
   if (gas < LOW_GAS) fuel(OWNER_GAS, me);
   await executeAndConfirm({ tx, signer: faucet });
-}
-
-/** One transaction paying all three sample payees from the device key's own test money. */
-export async function seedBytes(round: number) {
-  const tx = new Transaction();
-  tx.setSender(agentAddress());
-  SAMPLE_PAYMENTS[round].forEach((amount, i) => {
-    const coin = tx.coin({ balance: dollars(amount), type: env.usdc });
-    tx.transferObjects([coin], [MOCK_ADDR.mum, MOCK_ADDR.gym, MOCK_ADDR.stream][i]);
-  });
-  return buildForOwner(tx);
 }
 
 /** Money sitting as loose coins, waiting to be moved where limits can reach it. */

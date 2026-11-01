@@ -37,7 +37,7 @@ describe("validateIntent", () => {
   });
 
   it("asks when the payee is unknown or the amount is unclear", () => {
-    expect(validateIntent(reduce(base), { to: "Dad" }, now)).toEqual({ ok: false, ask: "Who's Dad?" });
+    expect(validateIntent(reduce(base), { to: "Dad" }, now)).toEqual({ ok: false, ask: "Who's Dad?", unknown: true });
     expect(validateIntent(reduce(base), { to: "Mum", amount: "loads" }, now)).toMatchObject({ ok: false });
   });
 

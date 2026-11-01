@@ -43,26 +43,30 @@ const claim = async (revoke = false) => {
   await api("memory/account", { action: "execute", digest: s.digest, signature: signed.signature });
   return true;
 };
+// No sample data: real test money, and a real person who has only an address.
 await api("faucet", {});
-for (let round = 0; round < 3; round++) {
-  const next = await api("seed", { round });
-  await api("submit", { kind: "seed", ...(await asDevice(next.bytes)), meta: {} });
-}
-await new Promise((r) => setTimeout(r, 4000));
+const payee = new Ed25519Keypair().toSuiAddress();
 let s = await api("state?fresh=1");
-check("no wallet approval needed: history comes from the chain", s.questions.length === 3, `${s.balance} ${s.symbol}, ${s.questions.length} questions`);
+check("test money, no wallet approval, nothing invented", s.balance === "1000.00" && s.activity.length === 0 && s.questions.length === 0, s.balance);
 
-const say = async (text: string, asking?: unknown, followUp?: unknown) => api("talk", { text, asking, followUp });
+const say = async (text: string, followUp?: unknown) => api("talk", { text, followUp });
 const noise = await say("Sip");
 check("noise never becomes a purchase", !noise.proposal, noise.say);
-const mum = s.questions.find((q: { usual: string }) => q.usual.startsWith("50"));
-check("names a payee", (await say("That's Mum", mum)).say.includes("Mum"));
-await new Promise((r) => setTimeout(r, 1000));
-s = await api("state");
-await say("my gym", s.questions.find((q: { usual: string }) => !q.usual.startsWith("12")));
-s = await api("state");
-const last = await say("It's Streamly, a streaming subscription", s.questions[0]);
-console.log("    ", last.say);
+const who = await say("Send Mum 50");
+check("a new person: asks for the address", who.needsAddress === "Mum" && !who.proposal, who.say);
+const ticket = await say(payee, who.followUp);
+check("pasted address continues the payment", ticket.proposal?.path === "owner", ticket.understood);
+let last;
+for (let i = 0; i < 3; i++) {
+  const t = await say(i ? "Send Mum 50" : "Send Mum 50");
+  const pay = await api("pay", { to: "Mum", amount: "50", path: "owner" });
+  last = await api("submit", { kind: "pay", ...(await asOwner(pay.bytes)), meta: {} });
+  check(`real payment ${i + 1}`, !!last.digest, t.say);
+}
+check("three clean payments: it applies for credit", last.followUp?.kind === "set_limit", last.say);
+await new Promise((r) => setTimeout(r, 5000));
+const usual = await say("Send Mum her usual");
+check("it learned her usual from the chain", usual.proposal?.amount === "50", usual.understood);
 
 const lim = await api("limit", { category: "family", amount: "100", periodDays: 7 });
 const set = await api("submit", { kind: "limit", ...(await asOwner(lim.bytes)), meta: { category: "family", amount: "100", periodDays: 7 } });

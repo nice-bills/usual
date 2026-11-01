@@ -137,6 +137,7 @@ export default function Usual({ health }: { health: Health }) {
   const [loadError, setLoadError] = useState("");
   const [asking, setAsking] = useState<Question | null>(null);
   const [followUp, setFollowUp] = useState<Action | null>(null);
+  const [addressFor, setAddressFor] = useState("");
   const [skip, setSkip] = useState<string[]>([]);
   const [heard, setHeard] = useState("");
   const [reply, setReply] = useState<Reply | null>(null);
@@ -266,9 +267,9 @@ export default function Usual({ health }: { health: Health }) {
     api<Snapshot>("state").then((s) => {
       setSnap(s);
       setLoadError("");
-      setAsking(s.questions[0] ?? null);
+      if (health.mock) setAsking(s.questions[0] ?? null); // Only the demo has made-up history to ask about.
     }).catch((e) => setLoadError(e.message));
-  }, []);
+  }, [health]);
 
   useEffect(() => { if (ready) firstLoad(); }, [ready, firstLoad]);
 
@@ -284,7 +285,7 @@ export default function Usual({ health }: { health: Health }) {
   }, [health, wallet, askWallet]);
 
   /** Inside a limit no popup appears: the agent key on this device signs, and the server never can. */
-  const signAsAgent = useCallback(async (kind: "agent-pay" | "seed", bytes: string) => {
+  const signAsAgent = useCallback(async (kind: "agent-pay", bytes: string) => {
     const signed = await wallet!.agent!.signTransaction(fromBase64(bytes));
     return api<Outcome>("submit", { kind, bytes: signed.bytes, signature: signed.signature });
   }, [wallet]);
@@ -322,27 +323,23 @@ export default function Usual({ health }: { health: Health }) {
     }
   }, [memoryAccount, refresh]);
 
-  /** New testnet wallet: test money from the server, then the device key lays down sample history. No wallet popups. */
+  /** New testnet wallet: real test money from the server. No wallet popups. */
   const getStarted = useCallback(async () => {
     setError("");
-    setBusy("Adding test dollars and sample payments…");
+    setBusy("Adding your test dollars…");
     try {
       await api("faucet", {});
-      for (let round = 0; round < 3; round++) {
-        const next = await api<{ bytes: string }>("seed", { round });
-        await signAsAgent("seed", next.bytes);
-      }
       firstLoad();
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setBusy("");
     }
-  }, [signAsAgent, firstLoad]);
+  }, [firstLoad]);
 
   const startedUp = useRef(false);
   useEffect(() => {
-    if (health.mock || health.network === "mainnet" || !snap || snap.activity.length || snap.loose || startedUp.current) return;
+    if (health.mock || health.network === "mainnet" || !snap || Number(snap.balance.replace(/,/g, "")) > 0 || snap.loose || startedUp.current) return;
     startedUp.current = true;
     getStarted();
   }, [health, snap, getStarted]);
@@ -419,7 +416,7 @@ export default function Usual({ health }: { health: Health }) {
     setSkip([]);
     const s = await api<Snapshot>("state");
     setSnap(s);
-    setAsking(s.questions[0] ?? null);
+    if (health.mock) setAsking(s.questions[0] ?? null);
   }, [undo]);
 
   const send = useCallback(async (text: string) => {
@@ -458,6 +455,8 @@ export default function Usual({ health }: { health: Health }) {
       if (asking && (r.action.kind === "name" || r.action.kind === "skip")) setSkip((s) => [...s, asking.address]);
       if (r.asking !== undefined) setAsking(r.asking);
       setFollowUp(r.followUp ?? null);
+      setAddressFor(r.needsAddress ?? "");
+      if (r.needsAddress) { conversation.current = false; setTyping(true); }
       // Inside a learned limit the agent pays on its own after a short, cancellable pause.
       if (r.proposal && r.proposal.type !== "limit" && r.proposal.path === "agent") {
         setAutoPaying(true);
@@ -887,14 +886,14 @@ export default function Usual({ health }: { health: Health }) {
           {ready && !snap && !loadError && <p className="say">Reading your memory…</p>}
           {!ready && <p className="say">{account ? "Sign the message in your wallet." : "Connect your wallet to start."}</p>}
           {busy && !proposal && <p className="say">{busy}</p>}
-          {error && !health.mock && snap && !snap.activity.length && <button className="link" onClick={getStarted}>Try again</button>}
+          {error && !health.mock && snap && !Number(snap.balance.replace(/,/g, "")) && <button className="link" onClick={getStarted}>Try again</button>}
           {!health.mock && idle && snap && !snap.memory.account && Object.keys(snap.state.contacts).length > 0 && (
             <p className="say">Your memory sits on Usual&apos;s account. <button className="link" onClick={() => changeMemoryAccount(false)}>Make it yours</button></p>
           )}
           {snap?.loose && !busy && (
             <p className="say">{snap.loose} {snap.symbol} arrived. <button className="link" onClick={addDeposit}>Add it to Usual</button></p>
           )}
-          {idle && snap && snap.activity.length > 0 && !snap.memory.error && <p className="say">{firstName ? `Try “Send ${firstName} the usual”` : "Tap to talk"}</p>}
+          {idle && snap && !busy && !snap.memory.error && <p className="say">{firstName ? `Try “Send ${firstName} the usual”` : "Who are we paying? Try “Send Alex 5”"}</p>}
         </div>
         {gate && <button className="approve gate" onClick={() => { setGate(null); gate.go(); }}>{gate.label}</button>}
         {ready ? (
@@ -902,7 +901,7 @@ export default function Usual({ health }: { health: Health }) {
             <button ref={orb} className="orb" data-state={orbState} data-on={listening} aria-pressed={listening} aria-label={listening ? "Listening, tap to finish" : "Tap to talk"} onPointerDown={pressOrb} onPointerUp={releaseOrb} onPointerCancel={releaseOrb} onContextMenu={(e) => e.preventDefault()} {...hold}>{listening ? <Wave /> : <Mic />}</button>
             {typing ? (
               <form className="typed" onSubmit={(e) => { e.preventDefault(); send(typed); setTyped(""); }}>
-                <input aria-label="Type instead" autoFocus placeholder="Send Mum her usual" value={typed} onChange={(e) => setTyped(e.target.value)} onKeyDown={(e) => e.key === "Escape" && setTyping(false)} onBlur={(e) => { if (!typed && !e.relatedTarget) setTyping(false); }} />
+                <input aria-label="Type instead" autoFocus placeholder={addressFor ? `${addressFor}'s wallet address` : "Send Mum her usual"} value={typed} onChange={(e) => setTyped(e.target.value)} onKeyDown={(e) => e.key === "Escape" && setTyping(false)} onBlur={(e) => { if (!typed && !e.relatedTarget) setTyping(false); }} />
                 <button type="submit" className="ghost">Send</button>
               </form>
             ) : (

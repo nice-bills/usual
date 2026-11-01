@@ -17,6 +17,7 @@ export type Action =
   | { kind: "remember"; note: string }
   | { kind: "skip" }
   | { kind: "forget"; name: string }
+  | { kind: "add_contact"; name: string; amount?: string }
   | { kind: "mistake" }
   | { kind: "statement" }
   | { kind: "unknown"; say?: string };
@@ -32,6 +33,8 @@ const RELATIONS: Record<string, Category> = {
   cafe: "food", café: "food", coffee: "food", food: "food", lunch: "food", restaurant: "food", groceries: "food",
   taxi: "transport", bus: "transport", train: "transport", transport: "transport", uber: "transport", fuel: "transport",
 };
+
+export const isRelation = (name: string) => RELATIONS[name.toLowerCase()] === "family";
 
 /** A fragment of speech, not a name: saving these would poison memory. */
 export const notAName = (name: string) => name.trim().length < 2 || name.trim().split(/\s+/).length > 3 || /[?]$/.test(name.trim()) || /^(got it|wait a minute|never ?mind|hold on|one sec(ond)?|sorry)$/i.test(name.trim()) || /^(the|a|an|and|um+|uh+|hm+|okay|ok|yes|yeah|no|nope|hello|hi|thanks|thank you|you|bye|what|that|it|this|i)$/i.test(name.trim());

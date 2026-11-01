@@ -5,7 +5,8 @@ import { env } from "./env";
 import { checkLimit, inferRecurring, suggestLimit, validateIntent, type ChainPayment, type Recurring } from "./insights";
 import { load, memoryOn, ownedAccount, recallAbout, remember } from "./memory";
 import { formatAmount, formatBalance, parseAmount, shortAddr } from "./money";
-import { answerFrom, confirmLine, notAName, parse, type Action } from "./parse";
+import { isValidSuiAddress, normalizeSuiAddress } from "@mysten/sui/utils";
+import { answerFrom, confirmLine, isRelation, notAName, parse, type Action } from "./parse";
 import { categoryFor, nameForAddress, reduce, resolveContact, type Category, type Rec, type Stamped, type State } from "./records";
 import * as wallet from "./wallet";
 
@@ -33,6 +34,7 @@ export type Reply = {
   undo?: Rec[]; // records that put memory back as it was; payments have no undo
   asking?: Question | null;
   followUp?: Action | null;
+  needsAddress?: string; // Addresses can't be spoken: the app opens a box to paste into.
   remembered: number;
   memoryError?: string;
 };
@@ -74,6 +76,11 @@ export type TalkContext = { asking?: Question | null; followUp?: Action | null; 
 export async function talk(text: string, ctx: TalkContext): Promise<Reply> {
   const mem = await load();
   const s = mem.state;
+  // Anything else they say moves on: they're allowed to change their mind.
+  if (ctx.followUp?.kind === "add_contact" && /^0x/i.test(text.trim())) {
+    const base = { heard: text, by: "rules" as const, action: ctx.followUp, remembered: 0, memoryError: mem.error };
+    return { ...base, ...(await addContact(ctx.followUp, text, s)) };
+  }
   const yes = /^(yes|yeah|yep|sure|ok(ay)?|do it|go ahead|please do)\b/i.test(text.trim());
   const { action, by } = yes && ctx.followUp
     ? { action: ctx.followUp, by: "rules" as const }
@@ -165,16 +172,17 @@ async function run(a: Action, s: State, ctx: TalkContext): Promise<Out> {
       return { say: "Noted. I'll remember that.", remembered: n };
     }
     default:
-      return ask(a.kind === "unknown" ? a.say : undefined, ctx.text);
+      return ask(a.kind === "unknown" ? a.say : undefined, ctx.text, s);
   }
 }
 
 /** Anything that isn't a command goes to memory: Walrus recalls by meaning, and the reply can only use what came back. */
-async function ask(llmSay: string | undefined, text?: string): Promise<Out> {
+async function ask(llmSay: string | undefined, text: string | undefined, s: State): Promise<Out> {
   // "Got it" and "wait a minute" aren't questions, and answering them from memory sounds unhinged.
   const question = !!text && (text.trim().endsWith("?") || /^(what|when|where|who|why|how|which|did|do|does|is|are|am|can|have|has|tell me)\b/i.test(text.trim()));
   if (!question) return { say: llmSay ?? "OK.", remembered: 0 };
-  const memories = await recallAbout(text);
+  // What they told Usual outright always counts; payments can crowd it out of a similarity search.
+  const memories = [...new Set([...s.corrections.map((n) => `The user said: ${n}`), ...(await recallAbout(text))])];
   const say = memories.length ? await answerFrom(text, memories) : null;
   return { say: say ?? "I don't have anything on that yet. Tell me and I'll remember.", remembered: 0 };
 }
@@ -253,9 +261,19 @@ function subscription(name: string, r: Recurring): Extract<Rec, { type: "SUBSCRI
   };
 }
 
+/** A new person: their address goes into memory, then the payment carries on as if they'd always been known. */
+async function addContact(a: Extract<Action, { kind: "add_contact" }>, text: string, s: State): Promise<Out> {
+  const address = text.trim();
+  if (!isValidSuiAddress(address)) return { say: `That doesn't look like a wallet address. Paste ${a.name}'s address, or say something else.`, followUp: a, needsAddress: a.name, remembered: 0 };
+  const contact = { type: "CONTACT" as const, name: a.name, address: normalizeSuiAddress(address), relation: isRelation(a.name) ? a.name.toLowerCase() : undefined, source: "user" as const };
+  await write([contact]);
+  return pay({ kind: "pay", to: a.name, amount: a.amount }, { ...s, contacts: { ...s.contacts, [a.name.toLowerCase()]: contact } });
+}
+
 async function pay(a: Extract<Action, { kind: "pay" }>, s: State): Promise<Out> {
   const hist = await wallet.history();
   const v = validateIntent(s, { to: a.to, amount: a.amount }, Date.now(), hist);
+  if (!v.ok && v.unknown) return { say: `${v.ask} Paste their wallet address.`, followUp: { kind: "add_contact", name: a.to, amount: a.amount }, needsAddress: a.to, remembered: 0 };
   if (!v.ok) return { say: v.ask, followUp: v.retry ? { kind: "pay", to: v.retry.to, amount: v.retry.amount == null ? undefined : String(v.retry.amount) } : null, remembered: 0 };
   const { plan } = v;
   const short = plan.amount - (await wallet.balance());
@@ -371,16 +389,18 @@ export async function recordPayment(s: State, address: string, amount: bigint, d
     recs.push({ ...u, count: (u.count ?? 0) + 1 });
   }
   await remember(recs);
-  const sug = suggestLimit({ ...after }, []);
+  const paid = after.payments.map((p) => ({ to: p.to, amount: parseAmount(p.amount) ?? 0n, digest: p.digest, at: p.at }));
+  const sug = suggestLimit(after, paid);
+  const per = sug ? (sug.periodDays === 30 ? "month" : sug.periodDays === 7 ? "week" : "day") : "";
   return {
     digest,
-    followUp: sug?.raise ? ({ kind: "set_limit", category: sug.category, amount: sug.amount, periodDays: sug.periodDays } as Action) : undefined,
-    say: `Sent ${formatAmount(amount)} ${env.symbol}${name ? ` to ${name}` : ""}.${learned ? ` I'll treat ${learned} as ${name}'s usual from now on.` : ""}${sug?.raise ? ` My ${sug.category} record is clean. Can I have ${sug.amount}?` : ""}`,
+    followUp: sug ? ({ kind: "set_limit", category: sug.category, amount: sug.amount, periodDays: sug.periodDays } as Action) : undefined,
+    say: `Sent ${formatAmount(amount)} ${env.symbol}${name ? ` to ${name}` : ""}.${learned ? ` I'll treat ${learned} as ${name}'s usual from now on.` : ""}${sug ? (sug.raise ? ` My ${sug.category} record is clean. Can I have ${sug.amount}?` : ` That's three clean payments. Can I have a credit line of ${sug.amount} ${env.symbol} a ${per} for ${sug.category}?`) : ""}`,
   };
 }
 
 /** Owner signed something: a payment, a new limit, or a one-shot café approval. */
-export async function afterSigned(kind: "pay" | "agent-pay" | "limit" | "cafe" | "seed" | "deposit", bytes: string, signature: string, meta: { category?: Category; amount?: string; periodDays?: number; item?: string }) {
+export async function afterSigned(kind: "pay" | "agent-pay" | "limit" | "cafe" | "deposit", bytes: string, signature: string, meta: { category?: Category; amount?: string; periodDays?: number; item?: string }) {
   const { state: s } = await load();
   const before = kind === "deposit" ? await wallet.looseBalance() : 0n;
   const r = await wallet.submitSigned(bytes, signature);
@@ -388,7 +408,6 @@ export async function afterSigned(kind: "pay" | "agent-pay" | "limit" | "cafe" |
     if (!r.payment) return { ok: true, digest: r.digest, say: "Done." };
     return { ok: true, ...(await recordPayment(s, r.payment.to, r.payment.amount, r.digest, kind === "pay" ? "owner" : "agent")) };
   }
-  if (kind === "seed") return { ok: true, digest: r.digest, say: "" };
   if (kind === "deposit") {
     await remember([{ type: "DEPOSIT", amount: formatAmount(before), digest: r.digest, at: Date.now() }]);
     return { ok: true, digest: r.digest, say: `${formatAmount(before)} ${env.symbol} is ready to spend.` };

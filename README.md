@@ -36,7 +36,7 @@ Three things are the user's, not ours:
 - **The agent key:** it is created on the user's device and can't be read out. Inside a limit the device signs and no popup appears. The server only builds transactions, so a breach can't spend.
 - **The money:** it stays in the user's wallet. Sui allowances cap what the agent can spend, on-chain.
 
-Anyone can try it on testnet: connect a wallet, and Usual gives you test dollars and sample history to learn from. Money from any other wallet or exchange arrives as a deposit you approve once.
+Anyone can try it on testnet: connect a wallet and Usual gives you test dollars. Nothing is simulated: say who to pay, paste their address once, and it learns from what you actually do. Money from any other wallet or exchange arrives as a deposit you approve once.
 
 Memory decides what happens. Open questions are answered only from semantic recall, and a note like "don't pay Mum until she confirms" stops the agent paying her even inside a limit.
 

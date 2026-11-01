@@ -66,12 +66,12 @@ export function confusable(a: bigint, b: bigint): boolean {
 
 /** Limits learned from behaviour: a category with spending and no limit gets a proposed one. */
 export function suggestLimit(s: State, hist: ChainPayment[], now = Date.now()) {
-  const PERIOD: Partial<Record<Category, number>> = { family: 7, food: 1, subscriptions: 30, transport: 7 };
+  const PERIOD: Partial<Record<Category, number>> = { family: 7, food: 1, subscriptions: 30, transport: 7, other: 7 };
   const nice = (v: bigint) => { const u = 1_000_000n; return ((v + u - 1n) / u) * u; };
   for (const [category, periodDays] of Object.entries(PERIOD) as [Category, number][]) {
     if (s.limits[category]) continue;
     const spent = hist.filter((p) => categoryFor(s, p.to) === category);
-    if (!spent.length) continue;
+    if (spent.length < 3) continue; // A line is earned: three payments first.
     const base = category === "subscriptions"
       ? Object.values(s.subscriptions).filter((x) => !x.cancelled).reduce((t, x) => t + (parseAmount(x.amount) ?? 0n), 0n)
       : spent.reduce((m, p) => (p.amount > m ? p.amount : m), 0n);
@@ -122,14 +122,14 @@ export type Plan = {
   limit: LimitCheck;
   guard?: string; // why this needs the owner even inside a limit
 };
-export type Validation = { ok: true; plan: Plan } | { ok: false; ask: string; retry?: Intent };
+export type Validation = { ok: true; plan: Plan } | { ok: false; ask: string; retry?: Intent; unknown?: true };
 
 /** The LLM proposes, this disposes. Any ambiguity becomes a question. */
 export function validateIntent(s: State, intent: Intent, now = Date.now(), hist?: ChainPayment[]): Validation {
   const r = resolveContact(s, intent.to);
   if (r.kind === "none") {
     const near = nearContact(s, intent.to);
-    return near ? { ok: false, ask: `Did you mean ${near.name}?`, retry: { ...intent, to: near.name } } : { ok: false, ask: `Who's ${intent.to}?` };
+    return near ? { ok: false, ask: `Did you mean ${near.name}?`, retry: { ...intent, to: near.name } } : { ok: false, ask: `Who's ${intent.to}?`, unknown: true };
   }
   if (r.kind === "many") return { ok: false, ask: `Which ${intent.to}? ${r.options.map((c) => c.name).join(" or ")}?` };
   const contact = r.contact;
