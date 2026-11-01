@@ -142,6 +142,12 @@ export default function Usual({ health }: { health: Health }) {
   const [error, setError] = useState("");
   const [thinking, setThinking] = useState(false);
   const [busy, setBusy] = useState("");
+  const [gate, setGate] = useState<{ label: string; go: () => void } | null>(null);
+  // Phones only open a wallet popup from a tap, and by now the tap that started this is long gone.
+  const askWallet = useCallback(async <T,>(label: string, sign: () => Promise<T>) => {
+    await new Promise<void>((go) => setGate({ label, go }));
+    return sign();
+  }, []);
   const [listening, setListening] = useState(false);
   const [typed, setTyped] = useState("");
   const [typing, setTyping] = useState(false);
@@ -221,12 +227,12 @@ export default function Usual({ health }: { health: Health }) {
       const agent = wallet.agent!.toSuiAddress();
       const a = await api<{ message: string; at: number; session: boolean }>(`auth?address=${account}&agent=${agent}`);
       if (a.session) return setAuthed(true);
-      const { signature } = await wallet.signMessage({ message: new TextEncoder().encode(a.message) });
+      const { signature } = await askWallet("Sign in with your wallet", () => wallet.signMessage({ message: new TextEncoder().encode(a.message) }));
       await api("auth", { address: account, agent, at: a.at, signature });
       setError("");
       setAuthed(true);
     })().catch((e) => setError(e.message)).finally(() => { signingIn.current = false; });
-  }, [health, account, authed, wallet]);
+  }, [health, account, authed, wallet, askWallet]);
 
   const refresh = useCallback(async (fresh = false) => {
     const s = await api<Snapshot>(`state?${fresh ? "fresh=1&" : ""}skip=${skip.join(",")}`);
@@ -250,11 +256,11 @@ export default function Usual({ health }: { health: Health }) {
     let signed = { bytes, signature: "mock" };
     if (!health.mock) {
       setBusy("Waiting for your wallet…");
-      signed = await wallet!.signTx({ transaction: bytes });
+      signed = await askWallet("Open your wallet to approve", () => wallet!.signTx({ transaction: bytes }));
     }
     setBusy("Sending…");
     return api<Outcome>("submit", { kind, bytes: signed.bytes, signature: signed.signature, meta });
-  }, [health, wallet]);
+  }, [health, wallet, askWallet]);
 
   /** Inside a limit no popup appears: the agent key on this device signs, and the server never can. */
   const signAsAgent = useCallback(async (kind: "agent-pay" | "seed", bytes: string) => {
@@ -273,13 +279,13 @@ export default function Usual({ health }: { health: Health }) {
     for (let i = 0; i < 2; i++) {
       const p = await api<{ done?: boolean; message: string; kind: string; timestamp: number; nonce: string }>("memory/account", { action: "prepare", revoke });
       if (p.done) return;
-      const { signature } = await wallet!.signMessage({ message: new TextEncoder().encode(p.message) });
+      const { signature } = await askWallet(`Memory step ${i + 1}: sign`, () => wallet!.signMessage({ message: new TextEncoder().encode(p.message) }));
       const s = await api<{ bytes: string; digest: string }>("memory/account", { action: "sponsor", kind: p.kind, timestamp: p.timestamp, nonce: p.nonce, signature });
-      const signed = await wallet!.signTx({ transaction: s.bytes, chain: "sui:mainnet" });
+      const signed = await askWallet(`Memory step ${i + 1}: approve`, () => wallet!.signTx({ transaction: s.bytes, chain: "sui:mainnet" }));
       await api("memory/account", { action: "execute", digest: s.digest, signature: signed.signature });
       if (revoke) return;
     }
-  }, [wallet]);
+  }, [wallet, askWallet]);
 
   const changeMemoryAccount = useCallback(async (revoke: boolean) => {
     setError("");
@@ -846,6 +852,7 @@ export default function Usual({ health }: { health: Health }) {
           )}
           {idle && snap && snap.activity.length > 0 && !snap.memory.error && <p className="say">{firstName ? `Try “Send ${firstName} the usual”` : "Tap to talk"}</p>}
         </div>
+        {gate && <button className="approve" onClick={() => { setGate(null); gate.go(); }}>{gate.label}</button>}
         {ready ? (
           <>
             <button ref={orb} className="orb" data-state={orbState} data-on={listening} aria-pressed={listening} aria-label={listening ? "Listening, tap to finish" : "Tap to talk"} onPointerDown={pressOrb} onPointerUp={releaseOrb} onPointerCancel={releaseOrb} onContextMenu={(e) => e.preventDefault()} {...hold}>{listening ? <Wave /> : <Mic />}</button>
