@@ -852,7 +852,7 @@ export default function Usual({ health }: { health: Health }) {
           )}
           {idle && snap && snap.activity.length > 0 && !snap.memory.error && <p className="say">{firstName ? `Try “Send ${firstName} the usual”` : "Tap to talk"}</p>}
         </div>
-        {gate && <button className="approve" onClick={() => { setGate(null); gate.go(); }}>{gate.label}</button>}
+        {gate && <button className="approve gate" onClick={() => { setGate(null); gate.go(); }}>{gate.label}</button>}
         {ready ? (
           <>
             <button ref={orb} className="orb" data-state={orbState} data-on={listening} aria-pressed={listening} aria-label={listening ? "Listening, tap to finish" : "Tap to talk"} onPointerDown={pressOrb} onPointerUp={releaseOrb} onPointerCancel={releaseOrb} onContextMenu={(e) => e.preventDefault()} {...hold}>{listening ? <Wave /> : <Mic />}</button>

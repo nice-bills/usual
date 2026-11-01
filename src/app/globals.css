@@ -66,6 +66,7 @@ button, input { font: inherit; color: inherit; }
 .approve { width: 100%; min-height: 52px; margin-top: 12px; border: 0; border-radius: 10px; background: #0a3a2a; color: #f6f4e6; font-weight: 500; cursor: pointer; transition: transform 150ms var(--ease); }
 .approve:active { transform: scale(0.98); }
 .approve:disabled { opacity: 0.6; cursor: default; }
+.approve.gate { background: #e8ee4b; color: #0a3a2a; margin: 0 0 12px; }
 .countdown { height: 2px; margin-top: 8px; background: var(--moss); transform-origin: left; animation: drain linear forwards; }
 .stage[data-card="true"] > .card, .stage[data-card="true"] > .slip { margin-block: auto; }
 .working { height: 2px; margin-top: 12px; overflow: hidden; background: var(--line); }
