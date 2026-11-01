@@ -2,6 +2,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { verifyPersonalMessageSignature } from "@mysten/sui/verify";
 import { normalizeSuiAddress } from "@mysten/sui/utils";
+import { mainnet, sui } from "./chain";
 import { env, MOCK } from "./env";
 import type { User } from "./user";
 
@@ -14,7 +15,10 @@ export const loginMessage = (address: string, agent: string, at: number) => `Usu
 
 export async function login(address: string, agent: string, at: number, signature: string): Promise<string> {
   if (Math.abs(Date.now() - at) > 5 * 60_000) throw new Error("stale sign-in message");
-  await verifyPersonalMessageSignature(new TextEncoder().encode(loginMessage(address, agent, at)), signature, { address });
+  // zkLogin wallets (sign in with Google) are checked by a node, and a proof is valid on its own network.
+  const message = new TextEncoder().encode(loginMessage(address, agent, at));
+  await verifyPersonalMessageSignature(message, signature, { address, client: sui() })
+    .catch(() => verifyPersonalMessageSignature(message, signature, { address, client: mainnet() }));
   const body = `${normalizeSuiAddress(address)}.${normalizeSuiAddress(agent)}.${Date.now() + TTL}`;
   return `${body}.${mac(body)}`;
 }
