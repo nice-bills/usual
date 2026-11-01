@@ -15,6 +15,10 @@ type Snapshot = { owner: string; memoryOn: boolean; symbol: string; balance: str
 type Outcome = { say: string; digest?: string; needsOwner?: string; bytes?: string; ok?: boolean; followUp?: Action };
 
 const AUTO_PAY_MS = 3000;
+const HOLD_MS = 500;
+const SILENCE_MS = 800;
+const WAIT_FOR_SPEECH_MS = 7000;
+const MAX_TURN_MS = 20_000;
 const SILENCE = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=";
 
 async function api<T>(path: string, body?: unknown): Promise<T> {
@@ -143,6 +147,7 @@ export default function Usual({ health }: { health: Health }) {
   const [settings, setSettings] = useState(false);
   const [done, setDone] = useState<Done | null>(null);
   const [tearing, setTearing] = useState(false);
+  const [speaking, setSpeaking] = useState(false);
   const rec = useRef<Rec | null>(null);
   const finalText = useRef("");
   const pressedAt = useRef(0);
@@ -150,6 +155,10 @@ export default function Usual({ health }: { health: Health }) {
   const stopHeld = useRef(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const orb = useRef<HTMLButtonElement>(null);
+  const conversation = useRef(false);
+  const listenAgain = useRef<(() => void) | null>(null);
+  const awaitingYes = useRef<Proposal | null>(null);
+  const audioContext = useRef<AudioContext | null>(null);
   const player = useRef<HTMLAudioElement | null>(null);
   const recorder = useRef<MediaRecorder | null>(null);
   const balanceEl = useRef<HTMLParagraphElement>(null);
@@ -158,6 +167,7 @@ export default function Usual({ health }: { health: Health }) {
   const running = useRef(false);
   const signingIn = useRef(false);
 
+  /** Resolves when the voice has finished, so the mic never hears Usual talking. */
   const speak = useCallback(async (text: string) => {
     const audio = player.current;
     if (!voiceOn || !audio || health.llm === "rules") return;
@@ -166,10 +176,22 @@ export default function Usual({ health }: { health: Health }) {
       if (!res.ok) return;
       audio.src = URL.createObjectURL(await res.blob());
       await audio.play();
+      await new Promise<void>((done) => {
+        audio.onended = () => done();
+        audio.onerror = () => done();
+        // Backstop only: iOS can skip the ended event when the page is interrupted.
+        setTimeout(done, (Number.isFinite(audio.duration) ? audio.duration * 1000 : 8000) + 500);
+      });
     } catch (e) {
       note("voice-failed", { message: (e as Error).message }); // the words are on screen, so this stays silent
     }
   }, [voiceOn, health]);
+
+  /** In a conversation, listen again once Usual has finished talking. */
+  const keepListening = useCallback(async (spoken: Promise<void>) => {
+    await spoken;
+    if (conversation.current) listenAgain.current?.();
+  }, []);
 
   const cancelAutoPay = () => {
     if (timer.current) clearTimeout(timer.current);
@@ -260,8 +282,9 @@ export default function Usual({ health }: { health: Health }) {
       const hold = r.followUp ? 7700 : 3700;
       setTimeout(() => setTearing(true), hold);
       setTimeout(() => { setDone(null); setTearing(false); }, hold + 300);
-      speak(r.say);
+      awaitingYes.current = null;
       refresh().catch(() => {});
+      keepListening(speak(r.say));
     } catch (e) {
       setError((e as Error).message);
       note("payment-failed", { message: (e as Error).message });
@@ -270,7 +293,7 @@ export default function Usual({ health }: { health: Health }) {
       running.current = false;
       setBusy("");
     }
-  }, [refresh, signAndSubmit, speak]);
+  }, [refresh, signAndSubmit, speak, keepListening]);
 
   /** Puts memory back as it was before the last change. Money that moved stays moved. */
   const revert = useCallback(async () => {
@@ -291,6 +314,21 @@ export default function Usual({ health }: { health: Health }) {
   const send = useCallback(async (text: string) => {
     if (!text.trim()) return;
     if (undo && /^(undo|go back|revert|take that back|never ?mind)\b/i.test(text.trim())) return revert();
+    // A ticket waiting for approval: yes or no out loud does what the button does.
+    const waiting = awaitingYes.current;
+    if (waiting && /^(yes|yeah|yep|ok|okay|sure|approve|do it|go ahead)\b/i.test(text.trim())) {
+      setHeard(text);
+      return execute(waiting);
+    }
+    if (waiting && /^(no|nope|cancel|stop|never ?mind)\b/i.test(text.trim())) {
+      awaitingYes.current = null;
+      setReply(null);
+      setHeard("");
+      setHint("Cancelled. Nothing was sent.");
+      keepListening(speak("Cancelled. Nothing was sent."));
+      return;
+    }
+    awaitingYes.current = null;
     cancelAutoPay();
     setHeard(text);
     setHint("");
@@ -305,7 +343,7 @@ export default function Usual({ health }: { health: Health }) {
       setReply(r);
       setThinking(false);
       setUndo(r.undo?.length ? r.undo : null);
-      speak(r.say);
+      const spoken = speak(r.say);
       if (asking && (r.action.kind === "name" || r.action.kind === "skip")) setSkip((s) => [...s, asking.address]);
       if (r.asking !== undefined) setAsking(r.asking);
       setFollowUp(r.followUp ?? null);
@@ -313,6 +351,9 @@ export default function Usual({ health }: { health: Health }) {
       if (r.proposal && r.proposal.type !== "limit" && r.proposal.path === "agent") {
         setAutoPaying(true);
         timer.current = setTimeout(() => { setAutoPaying(false); execute(r.proposal!); }, AUTO_PAY_MS);
+      } else {
+        if (r.proposal) awaitingYes.current = r.proposal;
+        keepListening(spoken);
       }
       refresh().catch(() => {});
     } catch (e) {
@@ -320,7 +361,7 @@ export default function Usual({ health }: { health: Health }) {
     } finally {
       setThinking(false);
     }
-  }, [asking, followUp, skip, undo, revert, execute, refresh, speak]);
+  }, [asking, followUp, skip, undo, revert, execute, refresh, speak, keepListening]);
 
   // Opened from a café QR: treat the request as if it had been spoken, once the wallet has loaded.
   useEffect(() => {
@@ -342,19 +383,15 @@ export default function Usual({ health }: { health: Health }) {
     pressedAt.current = Date.now();
     stopHeld.current = false;
     setTyping(false);
-    setHeard("");
-    setReply(null);
-    setDone(null);
     setHint("");
-    setError("");
     setListening(true);
     let stream: MediaStream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     } catch (e) {
-      note("mic-denied", { message: (e as Error).message });
+      note("mic-denied", { message: (e as Error).message, resumed: !!conversation.current });
       setListening(false);
-      setTyping(true);
+      conversation.current = false;
       setHint("The microphone is blocked. Allow it, or type instead.");
       return;
     }
@@ -369,32 +406,36 @@ export default function Usual({ health }: { health: Health }) {
     const mime = ["audio/webm", "audio/mp4"].find((m) => MediaRecorder.isTypeSupported(m)) ?? "";
     const media = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
     recorder.current = media;
-    let partialCall: AbortController | null = null;
-    const hear = async (signal?: AbortSignal) => {
+    const hear = async () => {
       const form = new FormData();
       form.set("language", navigator.language.slice(0, 2));
       form.set("audio", new File(chunks, mime.includes("mp4") ? "speech.mp4" : "speech.webm", { type: mime || "audio/webm" }));
-      const res = await fetch("/api/stt", { method: "POST", body: form, signal });
+      const res = await fetch("/api/stt", { method: "POST", body: form });
       if (!res.ok) throw new Error("transcription failed");
       return (await res.json() as { text: string }).text;
     };
-    let partial: Promise<unknown> | null = null;
-    media.ondataavailable = (e) => {
-      if (e.data.size) chunks.push(e.data);
-      if (partial || media.state !== "recording") return;
-      partialCall = new AbortController();
-      partial = hear(partialCall.signal).then((text) => {
-        if (media.state !== "recording" || !text) return;
-        setHeard(text);
-        orb.current?.animate([{ transform: "scale(1.12)" }, { transform: "scale(1.2)" }, { transform: "scale(1.12)" }], { duration: 260, easing: "cubic-bezier(0.22, 1, 0.36, 1)" });
-      }).catch(() => {}).finally(() => { partial = null; });
+    let spoke = false;
+    // One clean transcript per turn. Partials on short clips flashed invented words.
+    media.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+    const onSpeech = () => {
+      spoke = true;
+      setSpeaking(true);
+      setHeard("");
+      setReply(null);
+      setDone(null);
+      setError("");
+      orb.current?.animate([{ transform: "scale(1.08)" }, { transform: "scale(1.2)" }, { transform: "scale(1.08)" }], { duration: 260, easing: "cubic-bezier(0.22, 1, 0.36, 1)" });
     };
     media.onstop = async () => {
       stream.getTracks().forEach((t) => t.stop());
       recorder.current = null;
       setListening(false);
-      partialCall?.abort();
-      if (Date.now() - pressedAt.current < 400) return setHint("Keep holding while you talk.");
+      setSpeaking(false);
+      if (!spoke) {
+        conversation.current = false;
+        setHint("Tap to talk");
+        return;
+      }
       setThinking(true);
       const released = Date.now();
       note("released", { heldMs: released - pressedAt.current, bytes: chunks.reduce((n, c) => n + c.size, 0) });
@@ -402,17 +443,54 @@ export default function Usual({ health }: { health: Health }) {
         const text = await hear();
         note("transcribed", { ms: Date.now() - released, text });
         if (text) await send(text);
-        else setHint("I didn't catch that. Try again.");
+        else {
+          setHint("I didn't catch that.");
+          keepListening(Promise.resolve());
+        }
       } catch (e) {
         note("hearing-failed", { message: (e as Error).message });
-        setHint("I couldn't hear that. Try again, or type instead.");
-        setTyping(true);
+        setHint("I couldn't hear that. Say it again.");
+        keepListening(Promise.resolve());
       } finally {
         setThinking(false);
       }
     };
-    media.start(1500);
+    media.start();
+    // Voice detection: speech starts the moment, a short silence ends the turn.
+    const context = audioContext.current;
+    if (!context) return;
+    context.resume().catch(() => {});
+    const source = context.createMediaStreamSource(stream);
+    const meter = context.createAnalyser();
+    meter.fftSize = 1024;
+    source.connect(meter);
+    const wave = new Float32Array(meter.fftSize);
+    const opened = Date.now();
+    let quiet = 0;
+    let samples = 0;
+    let lastVoice = 0;
+    const watch = setInterval(() => {
+      if (media.state !== "recording") {
+        clearInterval(watch);
+        source.disconnect();
+        return;
+      }
+      meter.getFloatTimeDomainData(wave);
+      const level = Math.sqrt(wave.reduce((sum, v) => sum + v * v, 0) / wave.length);
+      const open = Date.now() - opened;
+      if (open < 250) {
+        quiet += level;
+        samples++;
+        return;
+      }
+      if (level > Math.max(0.015, (quiet / (samples || 1)) * 3)) {
+        lastVoice = Date.now();
+        if (!spoke) onSpeech();
+      }
+      if ((spoke && Date.now() - lastVoice > SILENCE_MS) || (!spoke && open > WAIT_FOR_SPEECH_MS) || open > MAX_TURN_MS) media.stop();
+    }, 50);
   };
+  useEffect(() => { listenAgain.current = () => { startWhisper(); }; });
 
   const startTalk = () => {
     if (listening) return;
@@ -477,9 +555,29 @@ export default function Usual({ health }: { health: Health }) {
     stopHeld.current = true;
   };
 
+  const pressOrb = () => {
+    if (recorder.current?.state === "recording") {
+      conversation.current = false;
+      recorder.current.stop();
+      return;
+    }
+    if (listening) return;
+    conversation.current = true;
+    const Context = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    audioContext.current ??= new Context();
+    audioContext.current.resume().catch(() => {});
+    startTalk();
+  };
+  /** A tap starts a conversation; a long hold still works as one push-to-talk turn. */
+  const releaseOrb = () => {
+    if (Date.now() - pressedAt.current < HOLD_MS) return;
+    conversation.current = false;
+    stopTalk();
+  };
+
   const hold = {
-    onKeyDown: (e: React.KeyboardEvent) => { if ((e.key === " " || e.key === "Enter") && !e.repeat) { e.preventDefault(); startTalk(); } },
-    onKeyUp: (e: React.KeyboardEvent) => { if (e.key === " " || e.key === "Enter") stopTalk(); },
+    onKeyDown: (e: React.KeyboardEvent) => { if ((e.key === " " || e.key === "Enter") && !e.repeat) { e.preventDefault(); pressOrb(); } },
+    onKeyUp: (e: React.KeyboardEvent) => { if (e.key === " " || e.key === "Enter") releaseOrb(); },
   };
 
   const symbol = snap?.symbol ?? "USDC";
@@ -563,7 +661,7 @@ export default function Usual({ health }: { health: Health }) {
   }
 
   return (
-    <main className="app" data-listening={listening}>
+    <main className="app" data-listening={speaking}>
       <div className="flood" aria-hidden="true" />
       <button className="menu" aria-label="Settings" onClick={() => setSettings(true)}><span /><span /></button>
 
@@ -603,7 +701,7 @@ export default function Usual({ health }: { health: Health }) {
               <>
                 <p className="note">Sending in a moment</p>
                 <div className="countdown" aria-hidden="true" style={{ animationDuration: `${AUTO_PAY_MS}ms` }} />
-                <button className="ghost" onClick={() => { cancelAutoPay(); setReply(null); setHeard(""); setHint("Cancelled. Nothing was sent."); }}>Cancel payment</button>
+                <button className="ghost" onClick={() => { cancelAutoPay(); conversation.current = false; setReply(null); setHeard(""); setHint("Cancelled. Nothing was sent."); }}>Cancel payment</button>
               </>
             )}
           </article>
@@ -639,7 +737,7 @@ export default function Usual({ health }: { health: Health }) {
       <footer className="dock">
         <div className="words" aria-live="polite">
           {heard && <p className="heard" data-testid="heard">“<Words text={heard} />”</p>}
-          {listening && !heard && <p className="say">Listening…</p>}
+          {listening && !reply && !done && <p className="heard">Listening…</p>}
           {thinking && <p className="say">Thinking…</p>}
           {reply && !proposal && !insight && (
             <p className="say" key={reply.say} data-testid="say"><Words text={reply.say} stagger={35} /> {undo && <button className="link" onClick={revert}>Undo</button>} {asking && reply.say.includes(asking.text) && <button className="link" onClick={() => send("skip")}>Skip</button>}</p>
@@ -653,11 +751,11 @@ export default function Usual({ health }: { health: Health }) {
           {loadError && <p className="problem" role="alert">I couldn&apos;t load your wallet. <button className="link" onClick={firstLoad}>Try again</button></p>}
           {ready && !snap && !loadError && <p className="say">Reading your memory…</p>}
           {!ready && <p className="say">{account ? "Sign the message in your wallet." : "Connect your wallet to start."}</p>}
-          {idle && snap && !snap.memory.error && <p className="say">{firstName ? `Try “Send ${firstName} the usual”` : "Hold to talk"}</p>}
+          {idle && snap && !snap.memory.error && <p className="say">{firstName ? `Try “Send ${firstName} the usual”` : "Tap to talk"}</p>}
         </div>
         {ready ? (
           <>
-            <button ref={orb} className="orb" data-state={orbState} data-on={listening} aria-pressed={listening} aria-label={listening ? "Listening, release to send" : "Hold to talk"} onPointerDown={startTalk} onPointerUp={stopTalk} onPointerCancel={stopTalk} onPointerLeave={() => listening && stopTalk()} onContextMenu={(e) => e.preventDefault()} {...hold}>{listening ? <Wave /> : <Mic />}</button>
+            <button ref={orb} className="orb" data-state={orbState} data-on={listening} aria-pressed={listening} aria-label={listening ? "Listening, tap to finish" : "Tap to talk"} onPointerDown={pressOrb} onPointerUp={releaseOrb} onPointerCancel={releaseOrb} onContextMenu={(e) => e.preventDefault()} {...hold}>{listening ? <Wave /> : <Mic />}</button>
             {typing ? (
               <form className="typed" onSubmit={(e) => { e.preventDefault(); send(typed); setTyped(""); }}>
                 <input aria-label="Type instead" autoFocus placeholder="Send Mum her usual" value={typed} onChange={(e) => setTyped(e.target.value)} onKeyDown={(e) => e.key === "Escape" && setTyping(false)} onBlur={(e) => { if (!typed && !e.relatedTarget) setTyping(false); }} />

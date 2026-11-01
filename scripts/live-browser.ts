@@ -70,7 +70,7 @@ await page.addInitScript({ content: `(() => {
 const pause = (ms: number) => page.waitForTimeout(ms);
 /** Press the orb, let words arrive, release: the path a real hold takes. */
 async function hold(text: string) {
-  const box = await page.getByRole("button", { name: "Hold to talk" }).boundingBox();
+  const box = await page.getByRole("button", { name: "Tap to talk" }).boundingBox();
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await page.mouse.down();
   await pause(mode === "demo" ? 500 : 150);

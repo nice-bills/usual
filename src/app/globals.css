@@ -132,7 +132,7 @@ button, input { font: inherit; color: inherit; }
 [data-listening="true"] .words p { max-width: none; }
 [data-listening="true"] .ghost, [data-listening="true"] .typed, [data-listening="true"] .menu { visibility: hidden; }
 .orb:active { transform: scale(0.96); }
-.orb[data-on="true"] { transform: scale(1.12); }
+.orb[data-on="true"] { transform: scale(1.08); }
 .orb[data-on="true"]::after { animation: listen 1.3s var(--ease) infinite; }
 .orb[data-state="invite"]::after { animation: listen 1.3s var(--ease) 800ms 1; }
 .orb[data-state="done"]::after { border-color: var(--moss); animation: listen 700ms var(--ease) 1; }
