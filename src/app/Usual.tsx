@@ -466,8 +466,8 @@ export default function Usual({ health }: { health: Health }) {
     source.connect(meter);
     const wave = new Float32Array(meter.fftSize);
     const opened = Date.now();
-    let quiet = 0;
-    let samples = 0;
+    // The quietest recent moment is the room. A fixed start window would mistake someone already talking for it.
+    let room = Infinity;
     let lastVoice = 0;
     const watch = setInterval(() => {
       if (media.state !== "recording") {
@@ -478,12 +478,8 @@ export default function Usual({ health }: { health: Health }) {
       meter.getFloatTimeDomainData(wave);
       const level = Math.sqrt(wave.reduce((sum, v) => sum + v * v, 0) / wave.length);
       const open = Date.now() - opened;
-      if (open < 250) {
-        quiet += level;
-        samples++;
-        return;
-      }
-      if (level > Math.max(0.015, (quiet / (samples || 1)) * 3)) {
+      room = Math.min(room * 1.002, Math.max(level, 0.001));
+      if (level > Math.max(0.012, room * 3)) {
         lastVoice = Date.now();
         if (!spoke) onSpeech();
       }

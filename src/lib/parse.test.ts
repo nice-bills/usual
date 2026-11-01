@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseRules } from "./parse";
+import { notAName, parseRules } from "./parse";
 
 const ctx = { contacts: ["Mum"], asking: null };
 const asking = { contacts: [], asking: { address: "0xabc" } };
@@ -29,6 +29,11 @@ describe("parseRules", () => {
     expect(parseRules("Mum", asking)).toMatchObject({ kind: "name", name: "Mum", category: "family" });
     expect(parseRules("Streamly streaming subscription", asking)).toMatchObject({ kind: "name", category: "subscriptions" });
     expect(parseRules("what am I wasting money on", asking)).toEqual({ kind: "summary" });
+  });
+
+  it("knows a speech fragment is not a name", () => {
+    expect(["The", "um", "Thank you", "ok", "x"].every(notAName)).toBe(true);
+    expect(["Mum", "Gym", "Netflix", "Jo"].some(notAName)).toBe(false);
   });
 
   it("lets the user skip a question", () => {

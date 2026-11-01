@@ -21,7 +21,7 @@ vi.mock("./wallet", () => ({
   owner: () => "0x0",
 }));
 
-const { talk } = await import("./agent");
+const { act, talk } = await import("./agent");
 
 describe("chain refusal", () => {
   beforeEach(() => preview.mockReset());
@@ -39,5 +39,14 @@ describe("chain refusal", () => {
     const r = await talk("Send Mum her usual", {});
     expect(r.proposal).toMatchObject({ type: "pay", path: "owner", overLimit: "over what the agent can spend" });
     expect(r.say).toContain("needs your signature");
+  });
+});
+
+describe("naming", () => {
+  it("never moves a known name onto a second wallet", async () => {
+    const other = "0x" + "2".repeat(64);
+    const r = await act({ kind: "name", name: "Mum" }, { asking: { address: other, text: "Who's that?", count: 3, usual: "30" } });
+    expect(r.say).toContain("You already have a Mum");
+    expect(r.remembered).toBe(0);
   });
 });

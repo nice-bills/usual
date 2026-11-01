@@ -31,6 +31,9 @@ const RELATIONS: Record<string, Category> = {
   taxi: "transport", bus: "transport", train: "transport", transport: "transport", uber: "transport", fuel: "transport",
 };
 
+/** A fragment of speech, not a name: saving these would poison memory. */
+export const notAName = (name: string) => name.trim().length < 2 || /^(the|a|an|and|um+|uh+|hm+|okay|ok|yes|yeah|no|nope|hello|hi|thanks|thank you|you|bye|what|that|it|this|i)$/i.test(name.trim());
+
 export function categoryOf(text: string): Category | undefined {
   for (const w of text.toLowerCase().split(/[^a-zé]+/)) if (RELATIONS[w]) return RELATIONS[w];
   return undefined;

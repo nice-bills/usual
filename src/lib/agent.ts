@@ -4,7 +4,7 @@ import { env } from "./env";
 import { checkLimit, inferRecurring, suggestLimit, validateIntent, type ChainPayment, type Recurring } from "./insights";
 import { load, memoryOn, remember } from "./memory";
 import { formatAmount, formatBalance, parseAmount, shortAddr } from "./money";
-import { parse, type Action } from "./parse";
+import { notAName, parse, type Action } from "./parse";
 import { categoryFor, nameForAddress, reduce, resolveContact, type Category, type Rec, type Stamped, type State } from "./records";
 import * as wallet from "./wallet";
 
@@ -162,6 +162,10 @@ async function run(a: Action, s: State, ctx: TalkContext): Promise<Out> {
 
 async function name(a: Extract<Action, { kind: "name" }>, s: State, ctx: TalkContext): Promise<Out> {
   const q = ctx.asking;
+  if (notAName(a.name)) return { say: q ? `Sorry, who's that? ${q.text}` : "Sorry, say that again.", asking: q ?? undefined, remembered: 0 };
+  // Renaming a second wallet to a known name would silently redirect that person's payments.
+  const taken = s.contacts[a.name.toLowerCase()];
+  if (q && taken && taken.address !== q.address) return { say: `You already have a ${taken.name} at ${shortAddr(taken.address)}. What's a different name for this one?`, asking: q, remembered: 0 };
   if (!q) return { say: `Who should ${a.name} be? Tell me when I ask about a wallet.`, remembered: 0 };
   const hist = await wallet.history();
   const rec = inferRecurring(hist).find((r) => r.address === q.address);
