@@ -10,6 +10,7 @@ import { fromBase64 } from "@mysten/sui/utils";
 import type { WalletApi } from "./Wallet";
 import { isEcho } from "./echo";
 import { AgentCard } from "./AgentCard";
+import { Scanner } from "./Scanner";
 import { AddMoney } from "./AddMoney";
 
 const Wallet = dynamic(() => import("./Wallet"), { ssr: false });
@@ -138,6 +139,7 @@ export default function Usual({ health }: { health: Health }) {
   const [asking, setAsking] = useState<Question | null>(null);
   const [followUp, setFollowUp] = useState<Action | null>(null);
   const [addressFor, setAddressFor] = useState("");
+  const [scanning, setScanning] = useState(false);
   const [skip, setSkip] = useState<string[]>([]);
   const [heard, setHeard] = useState("");
   const [reply, setReply] = useState<Reply | null>(null);
@@ -223,6 +225,8 @@ export default function Usual({ health }: { health: Health }) {
     // Only the last reply reopens the mic, and never mid-approval: two reopenings ran two recorders.
     if (conversation.current && !speechTurn.current && !running.current) listenAgain.current?.();
   }, []);
+
+  const closeScanner = useCallback(() => setScanning(false), []);
 
   const cancelAutoPay = () => {
     if (timer.current) clearTimeout(timer.current);
@@ -472,6 +476,12 @@ export default function Usual({ health }: { health: Health }) {
       setThinking(false);
     }
   }, [asking, followUp, skip, undo, revert, execute, refresh, speak, keepListening]);
+
+  const scanned = useCallback((address: string) => {
+    setScanning(false);
+    setTyping(false);
+    send(address);
+  }, [send]);
 
   // Opened from a café QR: treat the request as if it had been spoken, once the wallet has loaded.
   useEffect(() => {
@@ -895,13 +905,15 @@ export default function Usual({ health }: { health: Health }) {
           )}
           {idle && snap && !busy && !snap.memory.error && <p className="say">{firstName ? `Try “Send ${firstName} the usual”` : "Who are we paying? Try “Send Alex 5”"}</p>}
         </div>
+        {scanning && <Scanner name={addressFor} onAddress={scanned} onClose={closeScanner} />}
         {gate && <button className="approve gate" onClick={() => { setGate(null); gate.go(); }}>{gate.label}</button>}
         {ready ? (
           <>
             <button ref={orb} className="orb" data-state={orbState} data-on={listening} aria-pressed={listening} aria-label={listening ? "Listening, tap to finish" : "Tap to talk"} onPointerDown={pressOrb} onPointerUp={releaseOrb} onPointerCancel={releaseOrb} onContextMenu={(e) => e.preventDefault()} {...hold}>{listening ? <Wave /> : <Mic />}</button>
             {typing ? (
               <form className="typed" onSubmit={(e) => { e.preventDefault(); send(typed); setTyped(""); }}>
-                <input aria-label="Type instead" autoFocus placeholder={addressFor ? `${addressFor}'s wallet address` : "Send Mum her usual"} value={typed} onChange={(e) => setTyped(e.target.value)} onKeyDown={(e) => e.key === "Escape" && setTyping(false)} onBlur={(e) => { if (!typed && !e.relatedTarget) setTyping(false); }} />
+                <input aria-label="Type instead" autoFocus placeholder={addressFor ? `${addressFor}'s wallet address` : "Send Mum her usual"} value={typed} onChange={(e) => setTyped(e.target.value)} onKeyDown={(e) => e.key === "Escape" && setTyping(false)} onBlur={(e) => { if (!typed && !e.relatedTarget && !addressFor) setTyping(false); }} />
+                {addressFor && <button type="button" className="ghost" onClick={() => setScanning(true)}>Scan QR</button>}
                 <button type="submit" className="ghost">Send</button>
               </form>
             ) : (

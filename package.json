@@ -34,6 +34,7 @@
     "@protobuf-ts/runtime-rpc": "2.11.1",
     "@suimpp/mpp": "^0.9.0",
     "@tanstack/react-query": "^5.105.0",
+    "jsqr": "^1.4.0",
     "mppx": "0.4.12",
     "next": "16.4.3",
     "qrcode-generator": "^2.0.4",
