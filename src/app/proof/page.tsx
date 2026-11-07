@@ -18,7 +18,7 @@ export default function Page() {
   useEffect(() => { fetch("/api/proof").then((r) => r.json()).then(setP).catch(() => setFailed(true)); }, []);
   return (
     <main className="app settings">
-      <header className="settings-top"><h1>Proof</h1><Link className="ghost" href="/">Back to Usual</Link></header>
+      <header className="settings-top"><h1>Proof</h1><Link className="ghost" href="/app">Back to Usual</Link></header>
       <h2>Walrus Memory, Mainnet</h2>
       {failed && <p className="problem">Couldn&apos;t load live proof.</p>}
       {!p && !failed && <p className="fine">Reading Walrus…</p>}

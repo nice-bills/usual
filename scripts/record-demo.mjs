@@ -9,7 +9,7 @@ const browser = await chromium.launch();
 const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, colorScheme: "light", recordVideo: { dir: "demo", size: { width: 390, height: 844 } } });
 const page = await ctx.newPage();
 const pause = (ms) => page.waitForTimeout(ms);
-await page.goto("http://localhost:3123");
+await page.goto("http://localhost:3123/app");
 await pause(3500);
 await page.getByRole("button", { name: "Type", exact: true }).click();
 const say = async (text, wait = 3500) => {

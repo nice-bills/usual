@@ -14,7 +14,7 @@ const useOrigin = () => useSyncExternalStore(() => () => {}, () => window.locati
 export function CafeCounter() {
   const [item, setItem] = useState(ITEMS[0]);
   const origin = useOrigin();
-  const href = `${origin}/?request=${item.id}`;
+  const href = `${origin}/app?request=${item.id}`;
   const qr = qrcode(0, "M");
   qr.addData(href);
   qr.make();

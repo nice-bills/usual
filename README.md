@@ -13,7 +13,7 @@ corepack pnpm install
 corepack pnpm dev:mock
 ```
 
-Open http://localhost:3000, then:
+Open http://localhost:3000/app (the landing page is at `/`), then:
 1. Answer the "Who's that?" questions: "That's Mum", "That's my gym", "It's Streamly".
 2. Type or say "Send Mum her usual".
 3. Tap "Café: flat white". It's over the food limit, so it asks for a signature.

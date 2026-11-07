@@ -9,7 +9,7 @@ const say = async (screen: Screen, text: string) => {
 // One mock server for the run: these steps share its ledger and memory, so they run in order.
 describe('Usual core flows (mock mode)', { serial: true }, () => {
   test('cold start asks about recurring payees from chain history', async ({ app, screen }) => {
-    await app.open('/');
+    await app.open('/app');
     await expect(screen.getByTestId('balance')).toHaveText('462.50 USDC');
     await expect(screen.getByTestId('asking')).toContainText("50 USDC three times. Who's that?");
   });
@@ -103,7 +103,7 @@ describe('Usual core flows (mock mode)', { serial: true }, () => {
     await expect(screen.getByTestId('understood')).toContainText('Café · Flat white');
     await app.open('/proof');
     await expect(screen.getByRole('heading', 'Proof')).toBeVisible();
-    await app.open('/');
+    await app.open('/app');
   });
 
   test('open questions are answered from memory', async ({ screen }) => {
@@ -126,7 +126,7 @@ describe('Usual core flows (mock mode)', { serial: true }, () => {
 // Fresh server state is shared, so this group runs after the core flows on a new memory-free path.
 describe('safety and learning on a phone', { serial: true }, () => {
   test('memory comes back on after a reload', async ({ app, screen }) => {
-    await app.open('/');
+    await app.open('/app');
     await screen.getByRole('button', 'Settings').tap();
     await screen.getByRole('button', 'Memory: off').tap();
     await expect(screen.getByRole('button', 'Memory: on')).toBeVisible();

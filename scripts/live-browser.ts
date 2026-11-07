@@ -83,7 +83,7 @@ async function hold(text: string) {
 }
 const text = (id: string) => page.getByTestId(id).first().textContent({ timeout: 90_000 });
 
-await page.goto(base);
+await page.goto(`${base}/app`);
 await page.getByRole("button", { name: "Connect Wallet" }).first().click();
 await page.getByText("Test Wallet").first().click();
 await page.getByTestId("balance").waitFor({ timeout: 90_000 });
@@ -149,7 +149,7 @@ if (mode === "demo") {
   console.log("understood:", (await text("understood"))?.replace(/\s+/g, " "));
   await page.getByTestId("status").waitFor({ timeout: 60_000 });
   console.log("agent:", await text("status"), "| balance:", await text("balance"));
-  await page.goto(`${base}/?request=flat-white`);
+  await page.goto(`${base}/app?request=flat-white`);
   await page.getByRole("button", { name: "Approve with wallet" }).waitFor({ timeout: 90_000 });
   console.log("café:", await text("say"));
   await page.getByRole("button", { name: "Approve with wallet" }).click();
