@@ -25,7 +25,8 @@
 .menu { width: 44px; height: 44px; margin-right: -10px; border: 0; background: none; display: grid; place-content: center; gap: 6px; cursor: pointer; }
 .menu i { display: block; width: 18px; height: 2px; border-radius: 1px; background: currentColor; }
 
-.stage { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 24px; }
+/* Safe centring: when a card is taller than the space, it starts at the top and scrolls instead of sliding under the dock. */
+.stage { flex: 1; min-height: 0; margin: 0 -10px 12px; padding: 8px 10px 16px; display: flex; flex-direction: column; align-items: center; justify-content: safe center; gap: 24px; overflow-y: auto; scrollbar-width: none; }
 .stage[data-card="true"] { gap: 20px; }
 .balance { margin: 0; font-size: 76px; line-height: 1; letter-spacing: -0.035em; font-variant-numeric: tabular-nums; white-space: nowrap; animation: rise 600ms var(--ease) both; transition: font-size 450ms var(--ease); }
 .stage[data-card="true"] .balance { font-size: 34px; }
@@ -102,6 +103,15 @@
   .heard { font-size: 36px; }
   .line { width: min(100%, 290px); padding: 14px; }
   .orb { width: 72px; height: 72px; }
+  .stage[data-card="true"] { gap: 12px; }
+  .stage[data-card="true"] .balance { font-size: 28px; }
+  .card, .receipt { padding: 16px 18px; }
+  .check { width: 36px; height: 36px; }
+  .check::after { left: 13px; top: 8px; width: 10px; height: 17px; }
+  .said { margin-top: 10px; }
+  .total { margin: 10px 0; padding-block: 8px; font-size: 22px; }
+  .rows dt, .rows dd { padding: 7px 0; }
+  .dock { gap: 8px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
