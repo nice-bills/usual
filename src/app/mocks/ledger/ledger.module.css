@@ -1,0 +1,41 @@
+/* Mock 2 · Ledger. Warm paper, slowly turning banknote engraving, ruled lines feeding upward like a ledger. */
+.root {
+  --bg: #efe8d6;
+  --ink: #12261c;
+  --soft: #55665b;
+  --line: rgb(18 38 28 / 0.18);
+  --accent: #0f3d2b;
+  --onAccent: #e8ee4b;
+  --stamp: #b3261e;
+  --chrome: rgb(239 232 214 / 0.72);
+  --paper: #fbf8ee;
+  color-scheme: light;
+}
+
+/* Ledger rules drift up forever; the paper is never still. */
+.rules { position: absolute; inset: 0; opacity: 0.55; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='32'%3E%3Cpath d='M0 31.5h40' stroke='%2312261c' stroke-opacity='.12'/%3E%3C/svg%3E"); animation: feed 4s linear infinite; }
+.engrave { position: absolute; left: 50%; top: 50%; width: max(140vmax, 1400px); aspect-ratio: 1; translate: -50% -50%; fill: none; stroke: #0f3d2b; stroke-width: 0.7; opacity: 0.16; transition: opacity 900ms var(--ease), scale 1200ms var(--ease); }
+.engraveSmall { position: absolute; right: -120px; top: -120px; width: 520px; aspect-ratio: 1; fill: none; stroke: #b3261e; stroke-width: 0.8; opacity: 0.14; }
+.spinA { transform-origin: center; animation: spin 140s linear infinite; }
+.spinB { transform-origin: center; animation: spin 70s linear infinite reverse; }
+/* Listening: the engraving swells and darkens, as if pressed into the page. */
+.root[data-phase="listening"] .engrave { opacity: 0.32; scale: 1.12; }
+
+.brand { font-family: var(--font-serif), Georgia, serif; font-size: 22px; font-weight: 500; letter-spacing: -0.03em; }
+.balance, .amount { font-family: var(--font-mono), monospace; font-weight: 400; letter-spacing: -0.05em; }
+.heard { font-family: var(--font-serif), Georgia, serif; font-weight: 400; }
+.word { filter: none; }
+
+/* Risograph paper on paper: ink border and a hard offset shadow, no blur, no gradient. */
+.card, .receipt { background: var(--paper); border: 1.5px solid var(--ink); border-radius: 6px; box-shadow: 6px 6px 0 var(--ink); }
+.receipt { font-family: var(--font-mono), monospace; }
+.said { font-family: var(--font-sans), sans-serif; }
+.rows dt, .rows dd { border-top-style: dashed; }
+.pill { border: 1.5px solid var(--stamp); border-radius: 4px; color: var(--stamp); transform: rotate(-2deg); }
+.check { background: var(--accent); }
+.countdown { background: var(--stamp); }
+.lineWrap { display: contents; }
+.orb { box-shadow: 4px 4px 0 var(--stamp); }
+
+@keyframes feed { to { background-position: 0 -32px; } }
+@keyframes spin { to { transform: rotate(360deg); } }

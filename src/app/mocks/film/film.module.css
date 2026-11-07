@@ -1,0 +1,37 @@
+/* Mock 1 · Film. The landing's street footage keeps rolling behind the wallet; frosted glass, serif money. */
+.root {
+  --bg: #0b0c0b;
+  --ink: #f4f1ea;
+  --soft: rgb(244 241 234 / 0.66);
+  --line: rgb(255 255 255 / 0.14);
+  --accent: #f4f1ea;
+  --onAccent: #0b0c0b;
+  --stamp: #8fb89a;
+  --chrome: rgb(16 16 14 / 0.45);
+  --glass: rgb(18 18 16 / 0.5);
+}
+
+.video { position: absolute; inset: -4%; width: 108%; height: 108%; object-fit: cover; filter: saturate(0.85) brightness(0.62) contrast(1.05); transform: scale(1); transition: transform 1400ms var(--ease), filter 1000ms var(--ease); }
+.scrim { position: absolute; inset: 0; background: rgb(8 8 7 / 0.42); transition: background-color 900ms var(--ease); }
+.grain { position: absolute; inset: -60%; opacity: 0.18; mix-blend-mode: overlay; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 1.6 -0.3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); animation: grain 0.9s steps(5) infinite; }
+/* Talking pulls focus: the street drifts out of focus and closer, the way a film cuts to a close-up. */
+.root[data-phase="listening"] .video { transform: scale(1.14); filter: saturate(0.7) brightness(0.42) blur(10px); }
+.root[data-phase="listening"] .scrim { background-color: rgb(8 8 7 / 0.55); }
+.root[data-phase="paid"] .video { filter: saturate(1) brightness(0.7) contrast(1.05); }
+
+.brand { font-family: var(--font-serif), Georgia, serif; font-size: 22px; font-weight: 400; letter-spacing: -0.03em; }
+.balance, .amount, .lineAmount, .heard, .total span:last-child { font-family: var(--font-serif), Georgia, serif; font-weight: 300; }
+.heard { font-style: italic; font-size: 52px; }
+
+.line, .card, .receipt { background: var(--glass); border: 1px solid var(--line); -webkit-backdrop-filter: blur(26px) saturate(140%); backdrop-filter: blur(26px) saturate(140%); }
+.line { box-shadow: 0 30px 60px rgb(0 0 0 / 0.35); }
+.lineAmount { font-size: 48px; }
+.lineNote span:last-child { color: #8fb89a; }
+.pill { border: 1px solid rgb(143 184 154 / 0.5); color: #8fb89a; }
+.tally { color: #8fb89a; }
+.countdown { background: #8fb89a; }
+.check { background: #8fb89a; }
+.orb { box-shadow: 0 18px 40px rgb(0 0 0 / 0.4); }
+
+@keyframes grain { 0% { transform: translate(0, 0); } 20% { transform: translate(-3%, 2%); } 40% { transform: translate(2%, -3%); } 60% { transform: translate(-2%, -1%); } 80% { transform: translate(3%, 3%); } 100% { transform: translate(0, 0); } }
+@media (prefers-reduced-motion: reduce) { .grain { animation: none; } }
